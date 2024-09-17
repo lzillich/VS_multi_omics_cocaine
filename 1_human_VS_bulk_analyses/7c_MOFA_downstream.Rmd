@@ -1,0 +1,337 @@
+---
+title: "VS CUD MOFA Downstream - adapted from Tutorial code https://raw.githack.com/bioFAM/MOFA2_tutorials/master/R_tutorials/CLL.html and https://raw.githack.com/bioFAM/MOFA2_tutorials/master/R_tutorials/getting_started_R.html"
+output: html_document
+author: Code adapted from Eric Zillich and Lea Zillich
+date: last modification 2024-09-12
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages and python, include=FALSE}
+library(MOFA2)
+library(MOFAdata)
+library(data.table)
+library(ggplot2)
+library(tidyverse)
+library(psych)
+library(ggpubr)
+library(dplyr)
+library(clusterProfiler)
+library(enrichplot)
+library(DOSE)
+library(org.Hs.eg.db)
+
+reticulate::use_python("/home/user/anaconda3/bin/python", required=TRUE)
+```
+
+# Import the model and merge with metadata
+```{r import}
+VS <- readRDS("/path/to/protein/data_analysis_results_V1/MOFA/output/MOFA_VS_trained_model_20240303.rds")
+
+# metadata
+pheno_all_prot <- read.csv("/path/to/protein/data_analysis_results_V1/MOFA/pheno_all_prot.txt", sep=";")
+pheno_MDD_AUD_coc_at_death <- read.csv("/path/to/RNA/DE_results/pheno.txt", sep=";")
+pheno2 <- pheno_MDD_AUD_coc_at_death[,c("Brain_ID","Cocaine_at_death")]
+pheno2[41,] <- c("ID3",1) 
+pheno_all_prot <- merge(pheno_all_prot,pheno2,by="Brain_ID")
+
+# Add cibersort cell type estimates
+ciber <- read.csv("/path/to/RNA/DE_downstream/CIBERSORT/Markers_CIBERSORT_snRNA_VS.txt", sep=";")
+ciber <- ciber[,c(1:7)]
+colnames(ciber)[1] <- "rn_mRNA"
+
+pheno_cc <- merge(pheno_all_prot,ciber,by="rn_mRNA",all.x=T)
+
+colnames(pheno_cc)[2] <- "sample"
+pheno_cc$sample <- as.character(pheno_cc$sample)
+colnames(pheno_cc) <- gsub(".x$","",colnames(pheno_cc))
+pheno_cc <-pheno_cc[,c(2,1,3:7,10:19)]
+colnames(pheno_cc)[11] <- "Cocaine at death"
+samples_metadata(VS) <- pheno_cc
+```
+
+
+# Inspect the model characteristics
+Check if factors are largely uncorrelated
+```{r check if factors are largely uncorrelated}
+library(corrplot)
+pdf("/path/to/protein/data_analysis_results_V1/MOFA/corr_factors.pdf", width = 5, height = 5)
+plot_factor_cor(VS,col=rev(COL2("RdBu",200)))
+dev.off()
+
+```
+Variance decomposition analysis
+```{r variance decomposition analysis}
+p1 <- plot_variance_explained(VS)
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/model_factors.pdf",p1, width = 4, height = 5)
+ 
+```
+
+Total variance explained per view
+```{r total variance explained per view}
+p2 <- plot_variance_explained(VS, plot_total = T)[[2]]
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/model_varexp.pdf",p2, width = 5, height = 4)
+```
+
+
+# Factor characterization 
+How are the factors related to molecular processes?
+Association with sample metadata
+- Factor values
+- Feature weights
+- GSEA on mRNA weights
+
+
+# Association with sample metadata
+```{r association with sample metadata}
+pdf("/path/to/protein/data_analysis_results_V1/MOFA/model_cor_cov_r.pdf", width = 4, height = 4.5)
+correlate_factors_with_covariates(VS, 
+  covariates = colnames(pheno_cc[c("RIN","CUD","pH","Age","PMI","batch","Cocaine at death","OPC","Astrocyte","Oligodendrocyte","Inh_MSN" ,"Microglia","Inh_GABA")]), 
+  plot="r"
+)
+dev.off()
+
+# show this plot with stars inside the dots for the MOFA figure, include information on cocaine at death and BMI 
+
+p3 <- correlate_factors_with_covariates(VS, 
+  covariates = colnames(pheno_cc[c("RIN","CUD","pH","Age","PMI","batch","Cocaine at death","OPC","Astrocyte","Oligodendrocyte","Inh_MSN" ,"Microglia","Inh_GABA")]), 
+  plot="log_pval"
+)
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/model_cor_cov.pdf",p3, width = 3.5, height = 3.8)
+
+f10 <-get_factors(VS, factors = 10, as.data.frame = FALSE)
+
+metadata <- samples_metadata(VS)
+rownames(metadata) <- metadata$sample
+
+meta2 <- merge(metadata,f10$group1,by=0 )
+
+cor <- psych::corr.test(meta2$Factor10 , meta2$CUD, method = "pearson", 
+        adjust = "BH")
+cor$r #.3259648
+cor$p #0.0375411
+
+cor <- psych::corr.test(meta2$Factor10 , meta2$Cocaine_at_death, method = "pearson", 
+        adjust = "BH")
+cor$r #0.4681997
+cor$p #0.002021196
+
+cor <- psych::corr.test(meta2$Factor10 , meta2$Astrocyte, method = "pearson", 
+        adjust = "BH")
+cor$r #-0.3756318
+cor$p #0.01691383
+
+cor <- psych::corr.test(meta2$Factor10 , meta2$Oligodendrocyte, method = "pearson", 
+        adjust = "BH")
+cor$r #0.3175899
+cor$p #0.04582994
+
+cor <- psych::corr.test(meta2$Factor10 , meta2$Inh_GABA, method = "pearson", 
+        adjust = "BH")
+cor$r #-0.3934514
+cor$p #0.01201442
+
+
+```
+
+## Factor 10 characterization 
+
+# Plot feature weights of CUD associated factor 10
+```{r plot feature weights f5}
+# Score for each feature on each factor -> large values for features having strong associations with a factor
+library(cowplot)
+p4 <- plot_top_weights(VS,
+ view = "miRNA",
+ factor = 10,
+ nfeatures = 10,     # Top number of features to highlight
+ scale = T           # Scale weights from -1 to 1
+)+panel_border(remove=T)
+
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/miRNA_topweights.pdf",p4, width = 4.2, height =3.5)
+
+p5 <- plot_top_weights(VS,
+ view = "mRNA",
+ factor = 10,
+ nfeatures = 10,     # Top number of features to highlight
+ scale = T           # Scale weights from -1 to 1
+)+panel_border(remove=T)
+
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/mRNA_topweights.pdf",p5, width = 4.2, height = 3.5)
+
+p6 <- plot_top_weights(VS,
+ view = "protein",
+ factor = 10,
+ nfeatures = 10,     # Top number of features to highlight
+ scale = T           # Scale weights from -1 to 1
+)+panel_border(remove=T)
+
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/protein_topweights.pdf",p6, width = 4.2, height = 3.5)
+
+weights <- get_weights(VS,view = "miRNA",
+            factor = 10)
+weights <- weights$miRNA
+weights <- weights[order(weights,decreasing=T),]
+f10_pos_miR <- names(weights)[weights > 0][1:5]
+f10_neg_miR <- rev(names(weights)[weights < 0])[1:5]
+
+miR_df <- data.frame(miR=names(weights),w=unname(weights))
+write.table(miR_df,"/path/to/protein/data_analysis_results_V1/MOFA/miR_weights.txt",sep=";",quote=F,row.names=F,col.names=T)
+```
+
+
+# CUD status association with Factor 10
+
+```{r plot CUD status association with Factor 10}
+p7 <- plot_factor(VS, 
+  factors = 10, 
+  color_by = "CUD",
+  add_violin = F,
+  dodge = TRUE
+)+scale_fill_manual(values=c("#268989","#E43F3F"))+ylim(-2,3)
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/f10_CUD.pdf",p7, width = 4, height = 3)
+
+p72 <- plot_factor(VS, 
+  factors = 10, 
+  color_by = "Cocaine_at_death",
+  add_violin = F,
+  dodge = TRUE
+)+scale_fill_manual(values=c("#268989","#E43F3F"))+ylim(-2,3)
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/f10_Coc_at_death.pdf",p72, width = 4, height = 3)
+
+p73 <- plot_factor(VS, 
+  factors = 10, 
+  color_by = "Astrocyte",
+  add_boxplot = TRUE,
+  dodge = TRUE
+)+ylim(-2,3)
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/f10_Ast.pdf",p73, width = 4, height = 3)
+
+p74 <- plot_factor(VS, 
+  factors = 10, 
+  color_by = "Oligodendrocyte",
+  add_boxplot = TRUE,
+  dodge = TRUE
+)+ylim(-2,3)
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/f10_Olig.pdf",p74, width = 4, height = 3)
+
+p75 <- plot_factor(VS, 
+  factors = 10, 
+  color_by = "Inh_GABA",
+  add_boxplot = TRUE,
+  dodge = TRUE
+)+ylim(-2,3)
+ggsave("/path/to/protein/data_analysis_results_V1/MOFA/f10_Inh_GABA.pdf",p75, width = 4, height = 3)
+
+```
+
+# Feature expression - Factor 10
+
+```{r plot scatter2}
+plot_data_scatter(VS, 
+  view = "miRNA",
+  factor = 10,  
+  features = 20,
+  sign = "positive",
+  color_by = "CUD"
+) + labs(y="miRNA expression")
+
+
+plot_data_scatter(VS, 
+  view = "mRNA",
+  factor = 10,  
+  features = 10,
+  sign = "positive",
+  color_by = "CUD"
+) + labs(y="RNA expression")
+
+
+plot_data_scatter(VS, 
+  view = "protein",
+  factor = 10,  
+  features = 20,
+  sign = "positive",
+  color_by = "CUD"
+) + labs(y="protein expression")
+
+# Extract top loadings for integrated visualization 
+
+# Extract for converging evidence plot
+
+#mRNA
+f10_mRNA <- get_weights(VS,views="mRNA")
+  f10_mRNA<-f10_mRNA$mRNA
+  f10_mRNA <- f10_mRNA[,10]
+  f10_mRNA <- sort(f10_mRNA,decreasing = TRUE)
+RNA_df <- data.frame(RNA=names(f10_mRNA),w=unname(f10_mRNA))
+write.table(RNA_df,"/path/to/protein/data_analysis_results_V1/MOFA/RNA_weights.txt",sep=";",quote=F,row.names=F,col.names=T)
+
+#protein
+f10_protein <- get_weights(VS,views="protein")
+  f10_protein<-f10_protein$protein
+  f10_protein <- f10_protein[,10]
+  f10_protein <- sort(f10_protein,decreasing = TRUE)
+Protein_df <- data.frame(Protein=names(f10_protein),w=unname(f10_protein))
+write.table(Protein_df,"/path/to/protein/data_analysis_results_V1/MOFA/Prot_weights.txt",sep=";",quote=F,row.names=F,col.names=T)
+
+  
+  # Export loadings 
+  
+  quantile(f10_mRNA,probs=c(0.025,0.25,0.5,0.75,0.975))
+  
+#        2.5%          25%          50%          75%        97.5% 
+#-0.432971991 -0.122662861  0.002722169  0.131799828  0.417785597 
+  
+
+  quantile(f10_protein,probs=c(0.025,0.25,0.5,0.75,0.975))
+#        2.5%          25%          50%          75%        97.5% 
+#-6.787237e-03 -2.019648e-03 -1.297086e-05  1.956781e-03  6.112370e-03 
+  
+  f10_mRNA_top <- f10_mRNA[f10_mRNA > 0.417785597   | f10_mRNA < -0.432971991]
+ names(f10_mRNA_top) <-  gsub("_mRNA","",names(f10_mRNA_top))
+write.table(names(f10_mRNA_top),"/path/to/protein/data_analysis_results_V1/MOFA/Factor10_mRNA_loadings.txt",row.names = F,col.names = F,quote=F)
+
+f10_protein_top <- f10_protein[f10_protein > 6.112370e-03   | f10_protein < -6.787237e-03]
+ names(f10_protein_top) <-  gsub("_protein","",names(f10_protein_top))
+write.table(names(f10_protein_top),"/path/to/protein/data_analysis_results_V1/MOFA/Factor10_protein_loadings.txt",row.names = F,col.names = F,quote=F)
+
+```
+
+
+# GSEA using compareCluster
+
+```{r GSEA}
+
+f10_mRNA <- get_weights(VS,views="mRNA")
+  f10_mRNA<-f10_mRNA$mRNA
+  rownames(f10_mRNA) <- gsub("_mRNA","",rownames(f10_mRNA))
+  f10_mRNA <- f10_mRNA[,10]
+  f10_mRNA <- sort(f10_mRNA,decreasing = TRUE)
+
+f10_protein <- get_weights(VS,views="protein")
+  f10_protein<-f10_protein$protein
+  rownames(f10_protein) <- gsub("_protein","",rownames(f10_protein))
+  f10_protein <- f10_protein[,10]
+  f10_protein <- sort(f10_protein,decreasing = TRUE)
+
+  
+gene_list <- list(Factor10_mRNA=f10_mRNA ,Factor10_protein=f10_protein)
+
+# Plot and write output
+
+GO <- compareCluster(geneClusters = gene_list,fun = "gseGO",OrgDb = org.Hs.eg.db,keyType = "SYMBOL",pvalueCutoff=0.05,ont="ALL",exponent = 1,
+  minGSSize = 10,maxGSSize=500,eps=0,by="fgsea")
+
+GO2 <- GO
+GO2@compareClusterResult$Cluster <- as.character(GO2@compareClusterResult$Cluster)
+GO2@compareClusterResult$Cluster[GO2@compareClusterResult$NES > 0] <- paste0(GO2@compareClusterResult$Cluster[GO2@compareClusterResult$NES > 0],"_positive")
+GO2@compareClusterResult$Cluster[GO2@compareClusterResult$NES < 0] <-  paste0(GO2@compareClusterResult$Cluster[GO2@compareClusterResult$NES < 0],"_negative")
+GO2@compareClusterResult$Cluster <- factor(GO2@compareClusterResult$Cluster,levels=c("Factor10_mRNA_positive","Factor10_protein_positive","Factor10_mRNA_negative","Factor10_protein_negative"))
+GO2<-pairwise_termsim(GO2)
+p1 <- emapplot(GO2,legend_n=3,nCluster=4,cex_line=0.1,cex_label_category=1.2,layout='nicely',cex_category=0.65,showCategory=10,pie="equal")+scale_fill_manual(values=c("#0c70c8","#8FC7F8","#B0E5A3","#47a72f"))
+ggsave(paste0("/path/to/protein/data_analysis_results_V1/MOFA/GO_ALL_both_NES.pdf"),p1,height=9,width=10)
+
+write.table(GO2@compareClusterResult,"/path/to/protein/data_analysis_results_V1/MOFA/GO_table_f10.txt",sep=";",quote=F,row.names=F,col.names=T)
+
+```

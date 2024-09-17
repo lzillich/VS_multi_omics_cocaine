@@ -1,0 +1,303 @@
+---
+title: "Differential expression and GO enrichment analyses of snRNA-seq data"
+author: "Eric Zillich"
+date: "last modification EZ 2024-09-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+library(openxlsx)
+set.seed(42)
+```
+
+
+### Perform marker identification for CUD (condition) across all clusters
+```{r analysis CUD vs. ctrl, warning=FALSE, message=FALSE, results='hide'}
+seurat<-readRDS("/path/to/snRNAseq/2_data_processed/2_harmony_object.rds")
+seurat <- JoinLayers(seurat)
+
+DefaultAssay(seurat) <- "RNA"
+Idents(seurat) <- "CUD"
+
+# Remove MT genes from the DE analysis
+genes <- rownames(seurat[["RNA"]]$counts)
+genes2<- gsub('^MT-(.*)', NA, genes)
+genes <- genes[!is.na(genes2)]
+
+markers <- FindMarkers(seurat,ident.1 = "CUD", ident.2 = "Ctrl",  min.pct = 0,logfc.threshold = 0,assay = "RNA",features=genes)
+
+write.csv(markers, "/path/to/snRNAseq/3_results/DE/DE_AllCluster.csv", row.names = T)
+
+# Run RRHO using the bulk seq data as the second dataset 
+library(RRHO2)
+markers <- FindMarkers(seurat,ident.1 = "CUD", ident.2 = "Ctrl", min.pct = 0.1,logfc.threshold = 0,assay = "RNA",features=genes)
+
+DE_VS <- read.csv("/path/to/RNA/DE_results/DE_results.txt")
+DE_VS$RRHO_score <- -log10(DE_VS$pvalue)*sign(DE_VS$log2FoldChange)
+
+markers$Gene <- rownames(markers)
+markers$RRHO_score <- -log10(markers$p_val)*sign(markers$avg_log2FC)
+
+genes_RRHO <- intersect(DE_VS$Gene,markers$Gene)
+
+DE_VS <- DE_VS[DE_VS$Gene %in% 
+genes_RRHO , c("Gene","RRHO_score")]
+DE_snRNA_VS <- markers[markers$Gene %in% 
+genes_RRHO , c("Gene","RRHO_score")]
+
+
+RRHO_obj <-  RRHO2_initialize(DE_VS,DE_snRNA_VS , labels = c("bulk RNA-seq VS", "snRNA-seq VS"), log10.ind=TRUE,method = "hyper")
+
+RRHO2_heatmap(RRHO_obj,log10.ind=TRUE,method = "hyper")
+
+pdf("/path/to/snRNAseq/3_results/DE/RRHO_bulk_vs_snRNA.pdf",width=6,height=6)
+RRHO2_heatmap(RRHO_obj)
+dev.off()
+
+```
+ 
+### Perform marker identification for CUD (condition) for each cluster
+
+```{r analysis CUD vs. ctrl, warning=FALSE, message=FALSE, results='hide'}
+
+seurat@meta.data$cluster_condition <- paste0(seurat@meta.data$CUD,"_",seurat@meta.data$celltypes)
+Idents(seurat) <- "cluster_condition"
+
+DefaultAssay(seurat) <- "RNA"
+
+# Celltypes, remove Ependymal
+celltypes_to_test <- names(table(seurat$celltypes))[-5]
+
+for (i in celltypes_to_test){
+
+markers_cl <- FindMarkers(seurat,ident.1 = paste0("CUD_",i), ident.2 = paste0("Ctrl_",i), min.pct = 0,assay = "RNA",logfc.threshold = 0,features=genes)
+
+write.csv(markers_cl, paste0("/path/to/snRNAseq/3_results/DE/cluster",i,".csv"), row.names = T)
+
+}
+```
+
+
+# Heatmap of DE genes across clusters 
+```{r hm_GEX,warning=FALSE, message=FALSE, results='hide'}
+# Import DE results - log2FC 0.5 cutoff and padj 0.05, only celltypes with more than 100 cells from each condition
+OPC <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOPC.csv")
+OPC_sig <- OPC[OPC$p_val_adj<0.05 & abs(OPC$avg_log2FC)>0.25 ,]
+OPC_sig <- OPC_sig[OPC_sig$pct.1 > 0.25 | OPC_sig$pct.2 > 0.25, ]
+OPC_top10 <- OPC_sig$X[order(abs(OPC_sig$avg_log2FC),decreasing = T)][c(1:10)]
+write.table(OPC_sig,"/path/to/snRNAseq/3_results/DE/OPC_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
+
+Oligodendrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOligodendrocyte.csv")
+Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.05 & abs(Oligodendrocyte$avg_log2FC)>0.25,]
+Oligodendrocyte_sig <- Oligodendrocyte_sig[Oligodendrocyte_sig$pct.1 > 0.25 | Oligodendrocyte_sig$pct.2 > 0.25, ]
+Oligodendrocyte_top10 <- Oligodendrocyte_sig$X[order(abs(Oligodendrocyte_sig$avg_log2FC),decreasing = T)][c(1:10)]
+write.table(Oligodendrocyte_sig,"/path/to/snRNAseq/3_results/DE/Oligodendrocyte_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
+
+Astrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterAstrocyte.csv")
+Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.05 & abs(Astrocyte$avg_log2FC)>0.25,]
+Astrocyte_sig <- Astrocyte_sig[Astrocyte_sig$pct.1 > 0.25 | Astrocyte_sig$pct.2 > 0.25, ]
+Astrocyte_top10 <- Astrocyte_sig$X[order(abs(Astrocyte_sig$avg_log2FC),decreasing = T)][c(1:10)]
+write.table(Astrocyte_sig,"/path/to/snRNAseq/3_results/DE/Astrocyte_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
+
+Microglia <- read.csv("/path/to/snRNAseq/3_results/DE/clusterMicroglia.csv")
+Microglia_sig <- Microglia[Microglia$p_val_adj<0.05 & abs(Microglia$avg_log2FC)>0.25,]
+Microglia_sig <- Microglia_sig[Microglia_sig$pct.1 > 0.25 | Microglia_sig$pct.2 > 0.25, ]
+Microglia_top10 <- Microglia_sig$X[order(abs(Microglia_sig$avg_log2FC),decreasing = T)][c(1:10)]
+write.table(Microglia_sig,"/path/to/snRNAseq/3_results/DE/Microglia_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
+
+GABAergic_1 <- read.csv("/path/to/snRNAseq/3_results/DE/clusterGABAergic-1.csv")
+GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.05 & abs(GABAergic_1$avg_log2FC)>0.25,]
+GABAergic_1_sig <- GABAergic_1_sig[GABAergic_1_sig$pct.1 > 0.25 | GABAergic_1_sig$pct.2 > 0.25, ]
+GABAergic_1_top10 <- GABAergic_1_sig$X[order(abs(GABAergic_1_sig$avg_log2FC),decreasing = T)][c(1:10)]
+write.table(GABAergic_1_sig,"/path/to/snRNAseq/3_results/DE/GABAergic_1_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
+
+D2MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD2-MSN.csv")
+D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.05 & abs(D2MSN$avg_log2FC)>0.25,]
+D2MSN_sig <- D2MSN_sig[D2MSN_sig$pct.1 > 0.25 | D2MSN_sig$pct.2 > 0.25, ]
+D2MSN_top10 <- D2MSN_sig$X[order(abs(D2MSN_sig$avg_log2FC),decreasing = T)][c(1:10)]
+write.table(D2MSN_sig,"/path/to/snRNAseq/3_results/DE/D2MSN_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
+
+D1MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD1-MSN.csv")
+D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.05 & abs(D1MSN$avg_log2FC)>0.25,]
+D1MSN_sig <- D1MSN_sig[D1MSN_sig$pct.1 > 0.25 | D1MSN_sig$pct.2 > 0.25, ]
+D1MSN_top10 <- D1MSN_sig$X[order(abs(D1MSN_sig$avg_log2FC),decreasing = T)][c(1:10)]
+write.table(D1MSN_sig,"/path/to/snRNAseq/3_results/DE/D1MSN_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
+
+# Get list of DE genes that need to be included in the heatmap
+DE_genes <- c(OPC_sig$X,Oligodendrocyte_sig$X,D1MSN_sig$X,D2MSN_sig$X,GABAergic_1_sig$X,Microglia_sig$X,Astrocyte_sig$X)
+DE_genes <- DE_genes[!duplicated(DE_genes)]
+
+# Obtain log2FCs for each cluster for the selection of DE genes
+OPC <- OPC[OPC$X %in% DE_genes,c("X","avg_log2FC")]
+colnames(OPC)[2] <- "OPC"
+
+Oligodendrocyte <- Oligodendrocyte[Oligodendrocyte$X %in% DE_genes,c("X","avg_log2FC")]
+colnames(Oligodendrocyte)[2] <- "Oligodendrocyte"
+
+Astrocyte <- Astrocyte[Astrocyte$X %in% DE_genes,c("X","avg_log2FC")]
+colnames(Astrocyte)[2] <- "Astrocyte"
+
+Microglia <- Microglia[Microglia$X %in% DE_genes,c("X","avg_log2FC")]
+colnames(Microglia)[2] <- "Microglia"
+
+D1MSN <- D1MSN[D1MSN$X %in% DE_genes,c("X","avg_log2FC")]
+colnames(D1MSN)[2] <- "D1MSN"
+
+D2MSN <- D2MSN[D2MSN$X %in% DE_genes,c("X","avg_log2FC")]
+colnames(D2MSN)[2] <- "D2MSN"
+
+GABAergic_1 <- GABAergic_1[GABAergic_1$X %in% DE_genes,c("X","avg_log2FC")]
+colnames(GABAergic_1)[2] <- "GABAergic_1"
+
+
+# merge dfs
+library(tidyverse)
+dfs<-list(OPC,Oligodendrocyte,Astrocyte,Microglia,D1MSN,D2MSN,GABAergic_1) %>% purrr::reduce(inner_join,by="X")
+rownames(dfs)<-dfs$X
+
+# Create log2FC heatmap
+hm_DEG <- as.matrix(dfs[,-1])
+
+library(ComplexHeatmap)
+#reorder the rows to match with annotation labels
+rows_DEG <- row_order(Heatmap(hm_DEG,name="log2FC",column_names_gp  = gpar(fontsize=8),column_names_rot = 45))
+hm_DEG <- hm_DEG[rows_DEG,]
+
+# subset genes for labeling in the heatmap
+lab <- rownames(hm_DEG)
+lab_genes <- c(OPC_top10,Oligodendrocyte_top10,Astrocyte_top10,Microglia_top10,D1MSN_top10,D2MSN_top10,GABAergic_1_top10)
+ 
+#remove mitochondrial genes, pseudogenes and XIST
+lab_genes <- lab_genes[-grep("RPS|RPL|XIST|MT-|AC|AL|MTRNR",lab_genes)]
+lab[!(lab %in% lab_genes)] <- ""
+lab_genes <- unique(lab_genes[!is.na(lab_genes)])
+
+# Plot heatmap
+library(ComplexHeatmap)
+pdf("/path/to/snRNAseq/3_results/DEG_hm.pdf",width=4,height=8)
+Heatmap(hm_DEG,name="log2FC",cluster_columns = T,column_names_gp  = gpar(fontsize=8),column_names_rot = 45) + rowAnnotation(link = anno_mark(at = which(rownames(hm_DEG)==lab), 
+        labels = lab[lab !=""], padding = unit(1, "mm"),link_gp = gpar(lwd = 0.1) ,labels_gp = gpar(fontsize = 6)))
+dev.off()
+
+
+#Upset plot for DE genes 
+library(UpSetR)
+cell_list <- list(Astrocyte = Astrocyte_sig$X,OPC = OPC_sig$X,Oligodendrocyte=Oligodendrocyte_sig$X,Microglia=Microglia_sig$X,D1MSN=D1MSN_sig$X,D2MSN=D2MSN_sig$X,GABAergic_1=GABAergic_1_sig$X)
+
+pdf("/path/to/snRNAseq/3_results/Upset_DEG.pdf",width=9,height=6.5)
+upset(fromList(cell_list),nsets = 9,nintersects = 30,sets.x.label = "DE genes",mainbar.y.label = "DE gene overlap",order.by = "freq",text.scale = c(2,2,2,2,2,1.5))
+dev.off()
+```
+
+# GO terms for DE genes in clusters - Figure 2c
+```{r GO,warning=FALSE, message=FALSE, results='hide'}
+# use the compareCluster function of clusterProfiler
+# create gene list with DE genes for each cluster for up- and downregulated genes together
+
+GO_both <- list(Astrocyte=unique(Astrocyte_sig$X),Microglia=unique(Microglia_sig$X),Oligodendrocyte=unique(Oligodendrocyte_sig$X),OPC=unique(OPC_sig$X),D1MSN=unique(D1MSN_sig$X),D2MSN=unique(D2MSN_sig$X),GABAergic_1=unique(GABAergic_1_sig$X))
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
+
+both_GO <- compareCluster(geneClusters = GO_both,fun = "enrichGO",OrgDb = org.Hs.eg.db,keyType = "SYMBOL",pvalueCutoff=0.05)
+both_GO <-pairwise_termsim(both_GO)
+p <- emapplot(both_GO,legend_n=3,cex_line=0.1,cex_label_category=1.2,layout="nicely",cex_category=0.8,showCategory=10,pie="equal",repel=T)+scale_fill_manual(values=c("#F7AB64","#74BA59","#70305A","#E8326D", "#3A9BCC","#85CEE4","#006960"))
+ggsave("/path/to/snRNAseq/3_results/GO_both.pdf",p,height=9,width=9)
+write.table(both_GO@compareClusterResult,"/path/to/snRNAseq/3_results/GO_table.txt",sep=";",row.names = F,col.names = T,quote=F)
+
+#### Heatmaps ####
+
+OPC <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOPC.csv")
+Oligodendrocyte <- read.csv("/path/to/VS_multiome/snRNAseq/3_results/DE/clusterOligodendrocyte.csv")
+Astrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterAstrocyte.csv")
+Microglia <- read.csv("/path/to/snRNAseq/3_results/DE/clusterMicroglia.csv")
+GABAergic_1 <- read.csv("/path/to/snRNAseq/3_results/DE/clusterGABAergic-1.csv")
+D2MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD2-MSN.csv")
+D1MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD1-MSN.csv")
+
+# Obtain log2FCs and padj for each cluster 
+OPC <- OPC[,c("X","avg_log2FC","p_val_adj")]
+colnames(OPC)[c(2,3)] <- paste0(colnames(OPC)[c(2,3)],"_OPC")
+
+Oligodendrocyte <- Oligodendrocyte[,c("X","avg_log2FC","p_val_adj")]
+colnames(Oligodendrocyte)[c(2,3)] <- paste0(colnames(Oligodendrocyte)[c(2,3)],"_Oligodendrocyte")
+
+Astrocyte <- Astrocyte[,c("X","avg_log2FC","p_val_adj")]
+colnames(Astrocyte)[c(2,3)] <- paste0(colnames(Astrocyte)[c(2,3)],"_Astrocyte")
+
+Microglia <- Microglia[,c("X","avg_log2FC","p_val_adj")]
+colnames(Microglia)[c(2,3)] <- paste0(colnames(Microglia)[c(2,3)],"_Microglia")
+
+D1MSN <- D1MSN[,c("X","avg_log2FC","p_val_adj")]
+colnames(D1MSN)[c(2,3)] <- paste0(colnames(D1MSN)[c(2,3)],"_D1MSN")
+
+D2MSN <- D2MSN[,c("X","avg_log2FC","p_val_adj")]
+colnames(D2MSN)[c(2,3)] <- paste0(colnames(D2MSN)[c(2,3)],"_D2MSN")
+
+GABAergic_1 <- GABAergic_1[,c("X","avg_log2FC","p_val_adj")]
+colnames(GABAergic_1)[c(2,3)] <- paste0(colnames(GABAergic_1)[c(2,3)],"_GABAergic_1")
+
+# merge dfs
+library(tidyverse)
+dfs<-list(Microglia,OPC,Oligodendrocyte,Astrocyte,D1MSN,D2MSN,GABAergic_1) %>% purrr::reduce(inner_join,by="X")
+dfs_l2FC <- dfs[,c(1,2,4,6,8,10,12,14)]
+dfs_p <- dfs[,c(1,3,5,7,9,11,13,15)]
+colnames(dfs_l2FC) <- gsub("avg_log2FC_","",colnames(dfs_l2FC))
+rownames(dfs_l2FC) <- dfs_l2FC$X
+colnames(dfs_p) <- gsub("p_val_adj_","",colnames(dfs_p))
+rownames(dfs_p) <- dfs_p$X
+dfs_l2FC <- dfs_l2FC[,-1]
+dfs_p <- dfs_p[,-1]
+
+# structural component of ribosome genes
+ribo <- gsub("/",";",both_GO@compareClusterResult[1,"geneID"])
+ribo <- unlist(strsplit(ribo, ";"))
+
+# electron transfer activity genes
+nadh <- gsub("/",";",both_GO@compareClusterResult[3,"geneID"])
+nadh <- unlist(strsplit(nadh, ";"))
+
+# Create log2FC hms
+hm_ribo_genes <- dfs_l2FC[rownames(dfs_l2FC) %in% ribo,]
+ hm_ribo_genes <- as.matrix(hm_ribo_genes[match(ribo,rownames(hm_ribo_genes)),])
+ 
+hm_nadh_genes <- dfs_l2FC[rownames(dfs_l2FC) %in% nadh,]
+ hm_nadh_genes <- as.matrix(hm_nadh_genes[match(nadh,rownames(hm_nadh_genes)),])
+ 
+
+ ## Create pval hms
+ 
+ makeStars <- function(x){
+  stars <- c( "***", "**", "*","")
+  vec <- c(0, 0.001, 0.01, 0.05,1.01)
+  i <- findInterval(x, vec)
+  stars[i]
+ }
+ 
+hm_ribo_genes_p <- dfs_p[rownames(dfs_p) %in% ribo,]
+ hm_ribo_genes_p <- as.matrix(hm_ribo_genes_p[match(ribo,rownames(hm_ribo_genes_p)),])
+ hm_ribo_genes_star <-  t(apply(hm_ribo_genes_p,1,makeStars))
+colnames(hm_ribo_genes_star) <-  colnames(hm_ribo_genes_p)
+
+hm_nadh_genes_p <- dfs_p[rownames(dfs_p) %in% nadh,]
+ hm_nadh_genes_p <- as.matrix(hm_nadh_genes_p[match(nadh,rownames(hm_nadh_genes_p)),])
+ hm_nadh_genes_star <-  t(apply(hm_nadh_genes_p,1,makeStars))
+colnames(hm_nadh_genes_star) <-  colnames(hm_nadh_genes_p)
+
+library(RColorBrewer)
+library(pheatmap)
+
+pdf("/path/to/snRNAseq/3_results/Hm_ribosomal_genes.pdf",width=6,height=12)
+pheatmap(hm_ribo_genes, breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_ribo_genes_star,number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ribosomal genes")
+dev.off()
+
+# ETC includes genes from NADH dehydrogenase and cytochrom c oxidase 
+pdf("/path/to/snRNAseq/3_results/Hm_etc_genes.pdf",width=6,height=12)
+pheatmap(hm_nadh_genes, breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_nadh_genes_star,number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ETC genes")
+dev.off()
+
+```

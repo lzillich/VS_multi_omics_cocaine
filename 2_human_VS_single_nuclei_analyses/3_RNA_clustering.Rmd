@@ -1,0 +1,428 @@
+---
+title: "Analysis and Clustering of snRNA-seq data"
+author: "Eric Zillich"
+date: "last modification EZ 2024-09-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(openxlsx)
+set.seed(42)
+```
+
+# Merge samples 
+```{r Step 1a: import filtered files}
+
+#read data post QC
+sample1 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX1.rds")
+sample2 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX2.rds")
+sample3 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX3.rds")
+sample4 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX4.rds")
+sample5 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX5.rds")
+sample6 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX6.rds")
+sample7 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX7.rds")
+sample8 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX8.rds")
+sample9 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX9.rds")
+sample10 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX10.rds")
+sample11 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX11.rds")
+sample12 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX12.rds")
+sample13 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX13.rds")
+sample14 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX14.rds")
+sample15 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX15.rds")
+sample16 <- readRDS("/path/to/snRNAseq/2_data_processed/postQC/GEX15.rds")
+
+
+sample1$orig.ident <- "GEX1"
+sample2$orig.ident <- "GEX2"
+sample3$orig.ident <- "GEX3"
+sample4$orig.ident <- "GEX4"
+sample5$orig.ident <- "GEX5"
+sample6$orig.ident <- "GEX6"
+sample7$orig.ident <- "GEX7"
+sample8$orig.ident <- "GEX8"
+sample9$orig.ident <- "GEX9"
+sample10$orig.ident <- "GEX10"
+sample11$orig.ident <- "GEX11"
+sample12$orig.ident <- "GEX12"
+sample13$orig.ident <- "GEX13"
+sample14$orig.ident <- "GEX14"
+sample15$orig.ident <- "GEX15"
+sample16$orig.ident <- "GEX16"
+
+seurat <- merge(x = sample1, y = list(sample2, sample3,sample4, sample5, sample6, sample7, sample8, sample9, sample10, sample11, sample12, sample13, sample14, sample15,sample16), add.cell.ids = c("CUD-1","CUD-2","Ctrl-1","Ctrl-2","CUD-3","CUD-4","Ctrl-3","Ctrl-4","CUD-5","CUD-6","Ctrl-5","Ctrl-6","CUD-7","CUD-8","Ctrl-7","Ctrl8"))
+
+saveRDS(seurat,"/path/to/snRNAseq/2_data_processed/1_combined_object.rds")
+```
+
+
+```{r import QCed dataset, echo=FALSE}
+seurat <- readRDS("/path/to/snRNAseq/2_data_processed/1_combined_object.rds")
+```
+
+```{r import pheno data, echo=FALSE}
+pheno <- read.csv("/path/to/RNA/DE_results/pheno.txt", sep=";")
+pheno <- pheno[pheno$Brain_ID %in% paste0(c("ID"),c(1:16)),]
+#mean impute pH
+pheno$pH[is.na(pheno$pH)]<-6.335
+pheno <- pheno[,c("Brain_ID","pH","PMI","Age")]
+```
+
+```{r add meta data, echo=FALSE}
+#Brain ID
+seurat@meta.data$Brain_ID <- ""
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX1"] <- "ID1"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX2"] <- "ID2"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX3"] <- "ID3"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX4"] <- "ID4"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX5"] <- "ID5"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX6"] <- "ID6"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX7"] <- "ID7"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX8"] <- "ID8"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX9"] <- "ID9"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX10"] <- "ID10"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX11"] <- "ID11"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX12"] <- "ID12"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX13"] <- "ID13"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX14"] <- "ID14"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX15"] <- "ID15"
+seurat@meta.data$Brain_ID[seurat@meta.data$orig.ident=="GEX16"] <- "ID16"
+
+# CUD
+seurat@meta.data$CUD <- ""
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX1"] <- "CUD"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX2"] <- "CUD"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX3"] <- "Ctrl"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX4"] <- "Ctrl"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX5"] <- "CUD"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX6"] <- "CUD"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX7"] <- "Ctrl"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX8"] <- "Ctrl"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX9"] <- "CUD"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX10"] <- "CUD"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX11"] <- "Ctrl"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX12"] <- "Ctrl"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX13"] <- "CUD"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX14"] <- "CUD"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX15"] <- "Ctrl"
+seurat@meta.data$CUD[seurat@meta.data$orig.ident=="GEX16"] <- "Ctrl"
+
+
+#PMI
+seurat@meta.data$PMI <- 0
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID1"] <- pheno$PMI[pheno$Brain_ID == "ID1"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID2"] <- pheno$PMI[pheno$Brain_ID == "ID2"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID3"] <- pheno$PMI[pheno$Brain_ID == "ID3"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID4"] <- pheno$PMI[pheno$Brain_ID == "ID4"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID5"] <- pheno$PMI[pheno$Brain_ID == "ID5"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID6"] <- pheno$PMI[pheno$Brain_ID == "ID6"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID7"] <- pheno$PMI[pheno$Brain_ID == "ID7"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID8"] <- pheno$PMI[pheno$Brain_ID == "ID8"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID9"] <- pheno$PMI[pheno$Brain_ID == "ID9"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID10"] <- pheno$PMI[pheno$Brain_ID == "ID10"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID11"] <- pheno$PMI[pheno$Brain_ID == "ID11"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID12"] <- pheno$PMI[pheno$Brain_ID == "ID12"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID13"] <- pheno$PMI[pheno$Brain_ID == "ID13"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID14"] <- pheno$PMI[pheno$Brain_ID == "ID14"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID15"] <- pheno$PMI[pheno$Brain_ID == "ID15"]
+seurat@meta.data$PMI[seurat@meta.data$Brain_ID == "ID16"] <- pheno$PMI[pheno$Brain_ID == "ID16"]
+
+# pH
+seurat@meta.data$pH <- 0
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID1"] <- pheno$pH[pheno$Brain_ID == "ID1"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID2"] <- pheno$pH[pheno$Brain_ID == "ID2"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID3"] <- pheno$pH[pheno$Brain_ID == "ID3"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID4"] <- pheno$pH[pheno$Brain_ID == "ID4"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID5"] <- pheno$pH[pheno$Brain_ID == "ID5"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID6"] <- pheno$pH[pheno$Brain_ID == "ID6"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID7"] <- pheno$pH[pheno$Brain_ID == "ID7"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID8"] <- pheno$pH[pheno$Brain_ID == "ID8"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID9"] <- pheno$pH[pheno$Brain_ID == "ID9"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID10"] <- pheno$pH[pheno$Brain_ID == "ID10"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID11"] <- pheno$pH[pheno$Brain_ID == "ID11"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID12"] <- pheno$pH[pheno$Brain_ID == "ID12"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID13"] <- pheno$pH[pheno$Brain_ID == "ID13"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID14"] <- pheno$pH[pheno$Brain_ID == "ID14"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID15"] <- pheno$pH[pheno$Brain_ID == "ID15"]
+seurat@meta.data$pH[seurat@meta.data$Brain_ID == "ID16"] <- pheno$pH[pheno$Brain_ID == "ID16"]
+
+# Age
+seurat@meta.data$Age <- 0
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID1"] <- pheno$Age[pheno$Brain_ID == "ID1"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID2"] <- pheno$Age[pheno$Brain_ID == "ID2"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID3"] <- pheno$Age[pheno$Brain_ID == "ID3"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID4"] <- pheno$Age[pheno$Brain_ID == "ID4"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID5"] <- pheno$Age[pheno$Brain_ID == "ID5"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID6"] <- pheno$Age[pheno$Brain_ID == "ID6"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID7"] <- pheno$Age[pheno$Brain_ID == "ID7"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID8"] <- pheno$Age[pheno$Brain_ID == "ID8"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID9"] <- pheno$Age[pheno$Brain_ID == "ID9"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID10"] <- pheno$Age[pheno$Brain_ID == "ID10"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID11"] <- pheno$Age[pheno$Brain_ID == "ID11"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID12"] <- pheno$Age[pheno$Brain_ID == "ID12"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID13"] <- pheno$Age[pheno$Brain_ID == "ID13"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID14"] <- pheno$Age[pheno$Brain_ID == "ID14"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID15"] <- pheno$Age[pheno$Brain_ID == "ID15"]
+seurat@meta.data$Age[seurat@meta.data$Brain_ID == "ID16"] <- pheno$Age[pheno$Brain_ID == "ID16"]
+
+```
+
+
+```{r RNA analysis 1, echo=FALSE}
+DefaultAssay(seurat) <- "RNA"
+
+seurat <- NormalizeData(seurat) 
+seurat <- FindVariableFeatures(seurat,nfeatures = 3000)
+seurat <- ScaleData(seurat)
+seurat <- RunPCA(seurat) 
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:30)
+seurat <- FindClusters(seurat,resolution = 0.2)
+seurat <- RunUMAP(seurat, reduction = "pca", dims = 1:30)
+
+plot1 <- UMAPPlot(seurat, reduction="umap",group.by="orig.ident")
+plot2 <- UMAPPlot(seurat, reduction="umap", label = T)
+plot1
+plot2
+
+seurat <- IntegrateLayers(
+   object = seurat, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = FALSE
+)
+
+
+seurat <- FindNeighbors(seurat, reduction = "harmony", dims = 1:30)
+seurat <- FindClusters(seurat, resolution = 0.1, cluster.name = "harmony_clusters")
+seurat <- RunUMAP(seurat, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+p1 <- DimPlot(seurat,reduction = "umap.harmony")
+p1
+
+# remove cluster 7 , hight in mt genes 
+FeaturePlot(seurat,"percent.mt",reduction="umap.harmony")
+Idents(seurat)<-"seurat_clusters"
+seurat <- subset(seurat,idents=c(0,1,2,3,4,5,6,8,9,10,11))
+
+#seurat <- FindNeighbors(seurat, reduction = "harmony", dims = 1:30)
+seurat <- FindClusters(seurat, resolution = 0.12, cluster.name = "harmony_clusters")
+seurat <- RunUMAP(seurat, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+p2 <- DimPlot(seurat,reduction = "umap.harmony",label=T)
+p2
+```
+
+
+```{r pheno, echo=TRUE,out.width="100%"}
+# Inspect phenotype contribution to clustering
+DefaultAssay(seurat) <- "RNA"
+UMAPPlot(seurat, group.by ="Brain_ID")
+seurat$Age <- as.numeric(seurat$Age)
+UMAPPlot(seurat, group.by ="Age")
+UMAPPlot(seurat, group.by ="PMI")
+UMAPPlot(seurat, group.by ="pH")
+```
+
+## OPC
+```{r OPCs, echo=TRUE,out.width="100%",warning=FALSE, message=FALSE, results='hide'}
+DefaultAssay(seurat) <- "RNA"
+DimPlot(seurat,reduction = "umap.harmony")
+FeaturePlot(seurat, features = c("VCAN","PDGFRA","PCDH15"),reduction = "umap.harmony")
+DotPlot(object = seurat, features = c("VCAN","PDGFRA","PCDH15"))
+
+seurat$celltypes <- as.character(seurat$seurat_clusters)
+seurat$celltypes[seurat$celltypes=="5"] <- "OPC"
+```
+
+## Oligodendrocytes
+```{r mature oligodendrocytes, echo=TRUE,out.width="100%",warning=FALSE, message=FALSE, results='hide'}
+
+FeaturePlot(seurat, features = c("MBP","MOBP","PLP1"),reduction = "umap.harmony")
+DotPlot(object = seurat, features = c("MBP","MOBP","PLP1"))
+
+seurat$celltypes[seurat$celltypes == "0"] <- "Oligodendrocyte"
+
+```
+
+## Astrocytes
+```{r mature astrocytes, echo=TRUE,out.width="100%",warning=FALSE, message=FALSE, results='hide'}
+DefaultAssay(seurat) <- "RNA"
+FeaturePlot(seurat, features = c("GFAP","ALDH1L1","GLUL","AQP4","SLC1A2","SLC4A4"),reduction = "umap.harmony")
+DotPlot(object = seurat, features = c("GFAP","ALDH1L1","GLUL","AQP4","SLC1A2","SLC4A4"))
+
+seurat$celltypes[seurat$celltypes=="1"] <- "Astrocyte"
+
+```
+
+## Microglia
+```{r microglia, echo=TRUE,out.width="100%",warning=FALSE, message=FALSE, results='hide'}
+DefaultAssay(seurat) <- "RNA"
+FeaturePlot(seurat, features = c("CSF1R","APBB1IP","P2RY12"),reduction = "umap.harmony")
+DotPlot(object = seurat, features = c("CSF1R","APBB1IP","P2RY12","PTPRC","CD96","CD163"))
+
+seurat$celltypes[seurat$celltypes=="3"] <- "Microglia"
+```
+
+## Interneurons
+```{r interneurons, echo=TRUE,out.width="100%",warning=FALSE, message=FALSE, results='hide'}
+DefaultAssay(seurat) <- "RNA"
+FeaturePlot(seurat, features = c("GAD1","GAD2","SLC2A1","LAMP5","PAX6","VIP","SST","PVALB","ADARB2"),reduction = "umap.harmony")
+DotPlot(object = seurat, features = c("GAD1","GAD2","SLC2A1","LAMP5","PAX6","VIP","SST","PVALB","ADARB2"))
+
+#D1/D2 markers from Gokce et al. 2016 Cell Rep
+
+#D1 MSN
+FeaturePlot(seurat, features = c("TAC1","ISL1","DRD1"),reduction = "umap.harmony")
+
+
+#D2 MSN
+FeaturePlot(seurat, features = c("DRD2","ADORA2A","GPR6"),reduction = "umap.harmony")
+
+DotPlot(seurat, feature=c("GAD1","GAD2","TAC1","ISL1","DRD1","DRD2","ADORA2A","GPR6"))
+DotPlot(seurat, feature=c("GAD1","GAD2","CHAT","PTHLH","PVALB","CALB2","CCK", "NPY","ADARB2", "VIP", "SST","SLC5A7"))
+
+seurat$celltypes[seurat$celltypes=="4"] <- "D1-MSN"
+seurat$celltypes[seurat$celltypes=="2"] <- "D2-MSN"
+seurat$celltypes[seurat$celltypes=="6"] <- "GABAergic-1"
+seurat$celltypes[seurat$celltypes=="7"] <- "GABAergic-2"
+seurat$celltypes[seurat$celltypes=="8"] <- "GABAergic-3"
+
+```
+
+## Lymphocytes
+```{r lymphocytes, echo=TRUE,out.width="100%",warning=FALSE, message=FALSE, results='hide'}
+DefaultAssay(seurat) <- "RNA"
+FeaturePlot(seurat, features = c("CD96","CD3D","IL2RG"),reduction = "umap.harmony")
+DotPlot(object = seurat, features = c("CD96","CD3D","IL2RG"))
+
+seurat$celltypes[seurat$celltypes=="10"] <- "Lymphocyte"
+
+```
+
+## Endothelial cells 
+```{r endothelial, echo=TRUE,out.width="100%",warning=FALSE, message=FALSE, results='hide'}
+DefaultAssay(seurat) <- "RNA"
+FeaturePlot(seurat, features = c("FLT1","CLDN5","KDR"),reduction = "umap.harmony")
+DotPlot(object = seurat, features = c("FLT1","CLDN5","KDR"))
+
+seurat$celltypes[seurat$celltypes=="9"] <- "Endothelial"
+
+DotPlot(seurat,c("CFAP299"))
+seurat$celltypes[seurat$celltypes=="11"] <- "Ependymal"  
+```
+
+```{r save, echo=FALSE}
+Idents(seurat)<-"celltypes"
+DimPlot(seurat,label=T,reduction = "umap.harmony",label.size = 3)+NoAxes()+NoLegend()
+
+saveRDS(seurat, "/path/to/snRNAseq/2_data_processed/2_harmony_object.rds")
+```
+
+
+# Create heatmap with Top markers 
+```{r RNA find all markers,warning=FALSE, message=FALSE, results='hide'}
+Idents(seurat)<-"seurat_clusters"
+seurat <- JoinLayers(seurat)
+
+markers <- FindAllMarkers(seurat,logfc.threshold = 0.05)
+write.table(markers,file="/path/to/snRNAseq/3_results/markers/FindAllMarkers_output_res_01.txt",sep=";",row.names = T,quote=F)
+
+markers <- read.csv("/path/to/snRNAseq/3_results/markers/FindAllMarkers_output_res_01.txt", sep=";")
+
+# prepare marker gene dataframe
+top_markers <-data.frame(p_val=rep(0,times=240),avg_log2FC=rep(0,times=240),pct.1=rep(0,times=240),pct.2=rep(0,times=240),p_val_adj=rep(0,times=240),cluster=rep(0,times=240),gene=rep(0,times=240))
+
+for(i in c(0:11)){
+  markers_clust<- markers[markers$cluster == i,]
+  markers_clust_pos <- markers_clust[markers_clust$avg_log2FC > 0,][c(1:20),]
+  markers_clust_pos$cluster <-as.character(markers_clust_pos$cluster)
+  j <- 20*i+1 
+  k <- j +19
+  top_markers[j:k,] <- markers_clust_pos
+}
+
+# Create a heatmap of Top 20 marker genes
+seurat <- ScaleData(seurat, verbose = FALSE)
+DoHeatmap(seurat,features = top_markers$gene,assay = "RNA")
+
+hm <- DoHeatmap(seurat,features = top_markers$gene,assay = "RNA",draw.lines = T,group.bar = T)
+ggsave("/path/to/snRNAseq/3_results/markers/Heatmap_top20_marker_genes_integrated.pdf",plot = hm,width = 16,height=30)
+
+
+Idents(seurat)<-"celltypes"
+p1 <- DimPlot(seurat, label=F, label.size=3,reduction = "umap.harmony",pt.size=0.000005,order=c("Lymphocyte","Endothelial","Ependymal","GABAergic-3","GABAergic-2","GABAergic-1","D2-MSN","D1-MSN","OPC","Oligodendrocyte","Microglia", "Astrocyte"),cols= c("#F7AB64","#74BA59","#70305A","#E8326D", "#3A9BCC","#85CEE4","#006960","#003E65",  "#BFE1D7","#D1BCDC","#FCD8C1","#969997"))+NoAxes()
+ggsave("/path/to/snRNAseq/3_results/UMAP_RNA.pdf",plot = p1,width = 10,height=8)
+
+saveRDS(seurat,"/path/to/snRNAseq/2_data_processed/2_harmony_object.rds")
+
+# Expression marker gene heatmap
+genes <- c("GAD1","GAD2","DRD1","TAC1","DRD2","ADORA2A","HTR7","SST","PTHLH","PVALB","CCK","CALB2","AQP4","SLC1A2","VCAN","PDGFRA","MOBP","PLP1","CSF1R","P2RY12","CD96","CD3D","FLT1","CLDN5","CFAP299")
+Idents(seurat) <- "celltypes"
+seurat@active.ident <- factor(seurat@active.ident,
+                               levels= rev(c("D1-MSN",
+                                         "D2-MSN",
+                                         "GABAergic-1",
+                                         "GABAergic-2",
+                                         "GABAergic-3",
+                                         "Astrocyte",
+                                         "OPC",
+                                         "Oligodendrocyte",
+                                         "Microglia",
+                                         "Lymphocyte",
+                                         "Endothelial",
+                                         "Ependymal")))
+
+dp <- DotPlot(object = seurat, features = genes,assay ="RNA", dot.scale = 4.5) + 
+  theme(axis.text.x = element_text(angle = 90)) + 
+  theme(axis.text.y = element_text(size=10)) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1,size=10)) + 
+  theme(text=element_text(size = 8))+
+  theme(aspect.ratio =0.8) + xlab("")+ylab("")
+ggsave("/path/to/snRNAseq/3_results/marker_genes_RNA.pdf",plot = dp,width = 7,height=5)
+```
+
+
+# UMAPPlots covariates
+```{r UMAP_cov,warning=FALSE, message=FALSE, results='hide'}
+library(viridis)
+
+Idents(seurat)<- "CUD"
+p1 <- DimPlot(seurat,label=F,reduction = "umap.harmony",label.size = 3)+xlab("UMAP1")+ylab("UMAP2")
+ggsave("/path/to/snRNAseq/3_results/UMAP_CUD.pdf",plot = p1,width = 6,height=5)
+
+Idents(seurat)<- "orig.ident"
+p2 <- DimPlot(seurat,label=F,reduction = "umap.harmony",label.size = 3)+xlab("UMAP1")+ylab("UMAP2")
+ggsave("/path/to/snRNAseq/3_results/UMAP_sample.pdf",plot = p2,width = 6,height=5)
+
+Idents(seurat)<- "pH"
+seurat$AUD <- as.character(seurat$AUD)
+seurat$AUD <- factor(seurat$AUD,levels=names(table(sort(as.numeric(seurat$AUD)))))
+p3 <- DimPlot(seurat,label=F,reduction = "umap.harmony",order=rev(levels(seurat$AUD)))+xlab("UMAP1")+ylab("UMAP2")+scale_color_manual(values=rev(viridis(16)))
+ggsave("/path/to/snRNAseq/3_results/UMAP_pH.pdf",plot = p3,width = 6,height=5)
+
+Idents(seurat)<- "PMI"
+seurat$PMI <- as.character(seurat$PMI)
+seurat$PMI <- factor(seurat$PMI,levels=names(table(sort(as.numeric(seurat$PMI)))))
+p4 <- DimPlot(seurat,label=F,reduction = "umap.harmony",order=rev(levels(seurat$PMI)))+xlab("UMAP1")+ylab("UMAP2")+scale_color_manual(values=viridis(16))
+ggsave("/path/to/snRNAseq/3_results/UMAP_PMI.pdf",plot = p4,width = 6,height=5)
+
+Idents(seurat)<- "Age"
+seurat$Age <- as.character(seurat$Age)
+seurat$Age <- factor(seurat$Age,levels=names(table(sort(as.numeric(seurat$Age)))))
+p5 <- DimPlot(seurat,label=F,reduction = "umap.harmony",order=rev(levels(seurat$Age)))+xlab("UMAP1")+ylab("UMAP2")+scale_color_manual(values=rev(viridis(16)))
+ggsave("/path/to/snRNAseq/3_results/UMAP_Age.pdf",plot = p5,width = 6,height=5)
+
+pheno_coc_at_death <- read.csv("/path/to/RNA/DE_results/pheno_coc_at_death.txt", sep=";")
+seurat$coc_at_death <-""
+seurat$coc_at_death[seurat$Brain_ID %in% pheno_coc_at_death$Brain_ID[pheno_coc_at_death$Cocaine_at_death==1]] <- "yes"
+seurat$coc_at_death[seurat$Brain_ID %in% pheno_coc_at_death$Brain_ID[pheno_coc_at_death$Cocaine_at_death==0]] <- "no"
+
+Idents(seurat)<- "coc_at_death"
+p6 <- DimPlot(seurat,label=F,reduction = "umap.harmony",label.size = 3)+xlab("UMAP1")+ylab("UMAP2")
+ggsave("/path/to/snRNAseq/3_results/UMAP_Cocaine_at_death.pdf",plot = p6,width = 6,height=5)
+
+
+```
+

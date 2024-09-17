@@ -1,0 +1,673 @@
+---
+title: "Proteomics analysis VS multi-omics CUD"
+subtitle: "Version 1"
+author: "Frank Stein (PCF) and Eric Zillich"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+ 
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = TRUE)
+```
+ 
+```{r echo = FALSE}
+setwd("/path/to/protein/")
+```
+ 
+This analysis pipeline is partly based on an analysis workflow developed by Bernd Klaus.
+ 
+# R setup
+
+## Defining a working directory
+
+We defined the working directory for the analysis. This directory should contain the metadata file and the tab delimited text files containing the data.
+
+## Loading packages
+
+```{r LoadingPackages}
+library(vsn)
+library(limma)
+library(MSnbase)
+library(gplots)
+library(fdrtool)
+library(biobroom)
+library(tidyverse)
+```
+
+## Defining some functions and parameters
+
+```{r DefiningFunctions}
+customPlot <- list(
+  theme_bw(base_size = 12), 
+  scale_shape_manual(values = 1:40), 
+  scale_fill_brewer(palette = "Set1"), 
+  scale_colour_brewer(palette = "Set1")
+)
+script.version <- "V1"
+dir_save <- paste0("data_analysis_results_", script.version)
+if (!dir.exists(dir_save))
+{
+  dir.create(dir_save)
+}
+```
+
+# Loading data and annotating experimental conditions
+
+```{r loadRawFiles}
+conditions <- read.delim("metadata_detailed.csv", sep = ",")
+files <- file.path(unique(conditions$file))
+files <- files[file.exists(files)]
+data <- NULL
+for (i in seq_along(files))
+{
+  print(files[i])
+  x <- read_delim(file.path(files[i]), delim = "	")
+  names(x) <- make.names(names(x))
+  x$Gene[is.na(x$Gene)] <- x$Protein.ID[is.na(x$Gene)]
+  #keep only proteins with at least two unique peptide matches
+  x <- x %>%
+    dplyr::filter(Razor.Peptides >= 2)
+  #remove reverse hits
+  x <- x %>%
+    dplyr::filter(!grepl("rev_", Protein))
+  #remove known contaminants
+  x <- x %>%
+    dplyr::filter(!grepl("contam_", Protein))
+  x$file <- files[i]
+  keepnames <- as.character(subset(conditions, file == files[i])$col.name)
+  x <- x[, c("Gene", "Protein.ID", "Protein.Description", "Organism", "Unique.Peptides", "Razor.Peptides", "Total.Intensity", "file", keepnames)]
+  x <- x %>%
+    group_by(Gene, Protein.ID, Protein.Description, Organism, Unique.Peptides, Razor.Peptides, Total.Intensity, file) %>%
+    gather(key = "col.name", value = "value", keepnames)
+  x$Total.Intensity <- as.numeric(as.character(x$Total.Intensity))
+  data <- bind_rows(data, x)
+  rm(x, keepnames)
+}
+rm(i, files)
+data <- left_join(data, conditions)
+data <- subset(data, value > 0)
+```
+
+# Protein identification overview
+
+```{r proteinIdentificationOverview}
+sub <- unique(data[, c("Gene", "file", "rep")])
+sub$found <- 1
+sub$file_old <- sub$file
+sub$file <- paste("file", as.numeric(factor(sub$file)))
+print(unique(with(sub, paste(file, "-", file_old))))
+sub$file_old <- NULL
+sub <- unique(sub)
+ggplot(data = sub, aes(file, fill = rep)) + 
+  geom_bar(position = position_dodge()) + 
+  theme_bw(base_size = 12) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+with(sub, table(file, rep))
+sub_i <- data %>%
+  group_by(Gene) %>%
+  dplyr::select(Gene, rep, file) %>%
+  unique() %>%
+  summarise(found.in.files = n())
+ggplot(data = sub_i, aes(found.in.files)) + 
+  geom_bar(position = position_dodge()) + 
+  customPlot + 
+  xlab("no of identifications per file")
+table(sub_i$found.in.files)
+rm(sub_i)
+rm(sub)
+```
+
+# Identification and removal of duplicated gene names
+
+```{r renameDuplicates}
+dup.data <- data %>%
+  ungroup() %>%
+  dplyr::select(Gene, Protein.ID, file, Razor.Peptides) %>%
+  unique() %>%
+  group_by(file, Gene) %>%
+  dplyr::filter(n() > 1)
+if (nrow(dup.data) > 0)
+{
+  write.csv(dup.data, file.path(dir_save, paste0("Duplicates_", script.version, ".csv")), row.names = FALSE)
+}
+dups <- unique(dup.data$Gene)
+if (length(dups) > 0)
+{
+  print("Duplicates were identified:")
+  print(dups)
+  print("Removing genes with smaller numbers of quantified peptides.")
+  for (dup in dups)
+  {
+    for (filen in unique(subset(dup.data, Gene == dup)$file))
+    {
+      sub <- subset(data, Gene == dup & file == filen)
+      data <- subset(data, paste(Gene, file) != paste(dup, filen))
+      sub <- subset(sub, Razor.Peptides == max(sub$Razor.Peptides, na.rm = TRUE))
+      data <- bind_rows(data, sub)
+      rm(sub)
+    }
+    rm(filen)
+  }
+  rm(dup)
+}
+dup.data <- data %>%
+  ungroup() %>%
+  dplyr::select(Gene, Protein.ID, file, Razor.Peptides) %>%
+  unique() %>%
+  group_by(file, Gene) %>%
+  dplyr::filter(n() > 1)
+dups <- unique(dup.data$Gene)
+if (length(dups) > 0)
+{
+  print("Duplicates:")
+  print(dups)
+  print("Removing genes with the least overlap of protein ids in other ms experiments")
+  for (dup in dups)
+  {
+    sub <- subset(data, Gene %in% dup)
+    IDs <- unlist(strsplit(sub$Protein.ID, split = "[|]"))
+    rm(sub)
+    for (filen in unique(subset(dup.data, Gene == dup)$file))
+    {
+      sub <- subset(data, Gene == dup & file == filen)
+      data <- subset(data, paste(Gene, file) != paste(dup, filen))
+      sub$ID.count <- 0
+      for (ID in unique(sub$Protein.ID))
+      {
+        sub$ID.count[sub$Protein.ID == ID] <- length(which(IDs %in% unlist(strsplit(ID, split = "[|]"))))
+      }
+      sub <- subset(sub, ID.count == max(sub$ID.count, na.rm = TRUE))
+      sub$ID.count <- NULL
+      data <- bind_rows(data, sub)
+      rm(sub)
+    }
+    rm(filen, IDs)
+  }
+  rm(dup)
+}
+rm(dups, dup.data)
+```
+
+# Transforming long data to wide data
+
+```{r transformLongData2WideData, fig.height = 5}
+ggplot(data = data, aes(condition, log2(value), fill = batch)) + 
+  geom_boxplot(aes(group = paste(batch, condition, rep))) + 
+  ylab("log2(reporter_intensity)") + 
+  customPlot + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+cdata <- data %>%
+  group_by(Gene) %>%
+  mutate(key = paste("reporter_intensity", condition, rep, sep = "_")) %>%
+  dplyr::select(Gene, key, value) %>%
+  group_by(Gene, key) %>%
+  summarise(value = sum(value, na.rm = TRUE)) %>%
+  spread(key = key, value = value)
+#found.in.files
+fdata <- data %>%
+  group_by(Gene) %>%
+  dplyr::select(Gene, file) %>%
+  unique() %>%
+  summarise(found.in.files = n())
+fdata_i <- data %>%
+  mutate(file2 = make.names(file)) %>%
+  group_by(Gene, file2) %>%
+  dplyr::select(Gene, file, file2) %>%
+  unique() %>%
+  summarise(found.in.file = n()) %>%
+  mutate(file2 = paste0("found.in.file_", file2)) %>%
+  spread(key = file2, value = found.in.file)
+fdata <- left_join(fdata, fdata_i)
+#found.in.conditions
+fdata_i <- data %>%
+  group_by(Gene) %>%
+  dplyr::select(Gene, condition) %>%
+  unique() %>%
+  summarise(found.in.conditions = n())
+fdata <- left_join(fdata, fdata_i)
+#found.in.reps
+fdata_i <- data %>%
+  group_by(Gene) %>%
+  dplyr::select(Gene, rep) %>%
+  unique() %>%
+  summarise(found.in.reps = n())
+fdata <- left_join(fdata, fdata_i)
+#Unique.Peptides overview
+fdata_i <- data %>%
+  group_by(Gene) %>%
+  dplyr::select(Gene, Unique.Peptides) %>%
+  unique() %>%
+  summarise(max.Unique.Peptides = max(Unique.Peptides, na.rm = TRUE))
+fdata <- left_join(fdata, fdata_i)
+#Razor.Peptides overview
+fdata_i <- data %>%
+  group_by(Gene) %>%
+  dplyr::select(Gene, Razor.Peptides) %>%
+  unique() %>%
+  summarise(max.Razor.Peptides = max(Razor.Peptides, na.rm = TRUE))
+fdata <- left_join(fdata, fdata_i)
+#abundance overview
+fdata_i <- data %>%
+  group_by(Gene) %>%
+  dplyr::select(Gene, Total.Intensity) %>%
+  unique() %>%
+  summarise(average.Total.Intensity = mean(Total.Intensity, na.rm = TRUE))
+fdata <- left_join(fdata, fdata_i)
+id_data <- data %>%
+  ungroup() %>%
+  dplyr::select(Gene, Protein.ID, Protein.Description, Organism) %>%
+  unique()
+dups <- id_data %>%
+  group_by(Gene) %>%
+  summarize(n = n()) %>%
+  dplyr::filter(n > 1) %>%
+  dplyr::select(Gene)
+if (nrow(dups) > 0)
+{
+  dups <- dups$Gene
+  dup.data <- subset(id_data, Gene %in% dups)
+  id_data <- subset(id_data, !Gene %in% dups)
+  combine_ids <- function(ids)
+  {
+    ids <- as.character(ids)
+    return(paste(
+      sort(unique(unlist(strsplit(ids, split = "[;]")))), collapse = ";"))
+  }
+  dup.data <- dup.data %>%
+    group_by(Gene) %>%
+    summarise(Protein.ID = combine_ids(Protein.ID), 
+              Protein.Description = combine_ids(Protein.Description), 
+              Organism = combine_ids(Organism))
+  id_data <- bind_rows(id_data, dup.data)
+  rm(dup.data, combine_ids)
+}
+rm(dups)
+fdata <- left_join(id_data, fdata)
+rm(id_data)
+cdata <- left_join(fdata, cdata)
+rm(fdata_i, fdata)
+```
+
+# Filter data
+
+Only proteins that were quantified with two unique peptide matches are kept for the analysis. Proteins were filtered according to these condition already when loading the data. Moreover, only proteins were kept if they were quantified in at least 2/3 of the replicates.
+
+```{r filterData}
+dim(cdata)
+min.found.in.files <- 3
+min.Razor.Peptides <- 2
+cdata <- cdata %>%
+  dplyr::filter(found.in.files >= min.found.in.files, max.Razor.Peptides >= min.Razor.Peptides)
+dim(cdata)
+rm(min.found.in.files, min.Razor.Peptides)
+```
+
+# Building an expression set object
+
+```{r buildingEset}
+# Constructing assay data
+raw_data <- cdata %>%
+  dplyr::select(starts_with("reporter_intensity")) %>%
+  as.data.frame()
+rownames(raw_data) <- cdata$Gene
+names(raw_data) <- gsub("reporter_intensity_", "", names(raw_data))
+
+# Constructing metadata
+conditions_i <- data.frame(ID = names(raw_data))
+conditions_i <- left_join(conditions_i, conditions)
+
+# Constructing fdata
+fdata <- cdata %>%
+  dplyr::select(-starts_with("reporter_intensity")) %>%
+  as.data.frame()
+
+# Defining ID columns
+rownames(fdata) <- fdata$Gene
+rownames(conditions_i) <- conditions_i$ID
+colnames(raw_data) <- conditions_i$ID
+
+# Log2-transformation of raw_ reporter_intensitys
+raw_data_m <- log2(as.matrix(raw_data))
+raw_data_m[is.infinite((raw_data_m))] <- NA
+raw_data_m[is.na((raw_data_m))] <- NA
+
+# Creating an expression set
+raw_dataE <- ExpressionSet(assayData = raw_data_m, 
+                           phenoData = AnnotatedDataFrame(conditions_i), 
+                           featureData = AnnotatedDataFrame(fdata))
+validObject(raw_dataE)
+rm(raw_data, raw_data_m, conditions_i, fdata)
+```
+
+# Batch effect removal
+
+```{r removingBatchEffects}
+batchcl_dataE <- raw_dataE
+exprs(batchcl_dataE) <- removeBatchEffect(exprs(batchcl_dataE), 
+      batch = as.character(pData(batchcl_dataE)$batch), 
+      design = model.matrix(~0 + as.character(pData(batchcl_dataE)$condition)))
+```
+
+# Data normalization
+
+The vsn package from Wolfgang Huber is used to apply a variance stabilization normalization method on the log2 raw data.
+
+```{r DataNormalization}
+norm_dataE <- batchcl_dataE
+vsn.fit <- vsn2(2^exprs(batchcl_dataE))
+meanSdPlot(vsn.fit)
+norm_dataE <- batchcl_dataE
+exprs(norm_dataE) <- predict(vsn.fit, 2^exprs(norm_dataE))
+
+rm(sdplot.object, vsn.fit)
+```
+
+# Calculation of ctrl-fold changes
+
+```{r CalculateCtrlFoldChanges}
+fc.data <- as.data.frame(2^exprs(norm_dataE))
+names.orig <- names(fc.data)
+for (i in seq_along(conditions$ID))
+{
+  fc.data[, paste0(conditions$ID[i], ".ctrl.ratio")] <-
+    fc.data[, as.character(conditions$ID[i])] /
+    apply(fc.data[, subset(conditions, condition == "CTRL" & batch == conditions$batch[i])$ID], 1, median, na.rm = TRUE)
+    # fc.data[, as.character(conditions$ctrl.ID[i])]
+}
+rm(i)
+fc.data <- fc.data %>%
+  dplyr::select(ends_with(".ctrl.ratio"))
+fc.data$Gene <- rownames(fc.data)
+fc.data <- fc.data %>%
+  dplyr::select(ends_with(".ctrl.ratio"))
+ctrl.ratio_dataE <- norm_dataE
+names(fc.data) <- gsub(".ctrl.ratio", "", names(fc.data))
+fc.data <- fc.data[ , colnames(ctrl.ratio_dataE)]
+exprs(ctrl.ratio_dataE) <- fc.data %>%
+  as.matrix() %>%
+  log2()
+rm(fc.data)
+```
+
+# PCA - principal component analysis 
+
+```{r CreatePCAplots, fig.height = 5}
+sets <- list("raw data" = raw_dataE, "batchcl data" = batchcl_dataE, "norm data" = norm_dataE, "ctrl.ratio data" = ctrl.ratio_dataE)
+PCA_data <- NULL
+for (i in seq_along(sets)) {
+  set <- sets[[i]]
+  set.name <- names(sets)[i]
+  PCA_m <- t(na.omit(exprs(set)))
+  if (length(PCA_m) > 50) {
+    PCA <- prcomp(PCA_m, scale = FALSE)
+    perc_var <-
+      round(100 * PCA$sdev ^ 2 /
+              sum(PCA$sdev ^ 2), 1)
+    PCA_data_i <-
+      data.frame(PC1 = PCA$x[, 1],
+                 PC2 = PCA$x[, 2],
+                 PC3 = PCA$x[, 3],
+                 PC1.var = perc_var[1],
+                 PC2.var = perc_var[2],
+                 condition = pData(set)$condition,
+                 rep = pData(set)$batch,
+                 measurement = set.name)
+    PCA_data <- bind_rows(PCA_data, PCA_data_i)
+    rm(PCA_data_i)
+  }
+}
+rm(i)
+PCA_data$measurement <- factor(PCA_data$measurement, ordered = TRUE, levels = c("raw data", "batchcl data", "norm data", "ctrl.ratio data"))
+
+ggplot(data = PCA_data, aes(PC1, PC2, colour = PC3)) +
+  geom_point(aes(colour = condition, shape = rep), size = 4) +
+  guides(size = "none") +
+  customPlot +
+  ggtitle("PCA analysis") +
+  xlab("PC1") +
+  ylab("PC2") +
+  facet_wrap(. ~ measurement + paste("PC1:", PC1.var, "% var - PC2:", PC2.var, "% var"), scale = "free", ncol = 5)
+ggsave(file.path(dir_save, paste0("PCA_analysis_", script.version, ".pdf")),
+     width = 17, height = 5)
+write.csv(PCA_data, file = file.path(dir_save, paste0("PCA_analysis_data_", script.version, ".csv")), row.names = FALSE)
+
+# Additional PCA plot for the supplement 
+
+PCA_data2 <- PCA_data[PCA_data$measurement =="norm data",]
+rnames <- substr(rownames(PCA_data2),10,12)
+rownames(PCA_data2) <- rnames
+# Import additional pheno information
+pheno_with_CUD_Ctrl <- read.csv("/path/to/RNA/DE_results/pheno_with_CUD_Ctrl.txt", sep=";")
+rownames(pheno_with_CUD_Ctrl) <- pheno_with_CUD_Ctrl$Brain_ID
+
+PCA_data2 <- merge(pheno_with_CUD_Ctrl,PCA_data2,by=0)
+
+# Plot PCA
+library(ggrepel)
+pdf("/path/to/protein/data_analysis_results_V1/PCA_Proteomics_Supp.pdf", width = 5, height = 5 )
+ggplot(data=PCA_data2, aes_string(x="PC1", y="PC2", color="condition")) + geom_point(size=1) + 
+  xlab(paste0("PC1: ",round(PCA_data2$PC1.var[1]),"% variance")) +ylim(-60,60)+xlim(-60,60)+
+  ylab(paste0("PC2: ",round(PCA_data2$PC2.var[1]),"% variance")) +
+  coord_fixed(ratio=1)+ geom_text_repel(size = 3, aes(label = CUD), vjust = 2.2,max.overlaps = 3) +theme_minimal()+scale_color_manual(values=c("black","black"))
+dev.off()
+
+```
+
+# Merge modified data back into 'cdata'
+
+```{r CreateCastedData}
+cdata_i <- as.data.frame(2^exprs(batchcl_dataE))
+names(cdata_i) <- paste0("batchcl_reporter_intensity_", names(cdata_i))
+cdata_i$Gene <- rownames(cdata_i)
+cdata <- left_join(cdata, cdata_i)
+rm(cdata_i)
+
+cdata_i <- as.data.frame(2^exprs(norm_dataE))
+names(cdata_i) <- paste0("norm_reporter_intensity_", names(cdata_i))
+cdata_i$Gene <- rownames(cdata_i)
+cdata <- left_join(cdata, cdata_i)
+rm(cdata_i)
+
+cdata_i <- as.data.frame(2^exprs(ctrl.ratio_dataE))
+names(cdata_i) <- paste0("ctrl.ratio_", names(cdata_i))
+cdata_i$Gene <- rownames(cdata_i)
+cdata <- left_join(cdata, cdata_i)
+rm(cdata_i)
+
+write.csv(cdata, file = file.path(dir_save, paste0("Full_dataset_", script.version, ".csv")), row.names = FALSE)
+```
+
+# Create tidy data
+
+```{r CreateTidyData}
+mdata <- NULL
+
+mdata_i <- tidy(raw_dataE)
+mdata_i <- mdata_i %>%
+  mutate(value = 2 ^ value)
+names(mdata_i)[1] <- "Gene"
+names(mdata_i)[2] <- "ID"
+mdata_i <- left_join(mdata_i, conditions)
+mdata_i$measurement <- "raw_reporter_intensity"
+mdata <- bind_rows(mdata, mdata_i)
+rm(mdata_i)
+
+mdata_i <- tidy(batchcl_dataE)
+mdata_i <- mdata_i %>%
+  mutate(value = 2 ^ value)
+names(mdata_i)[1] <- "Gene"
+names(mdata_i)[2] <- "ID"
+mdata_i <- left_join(mdata_i, conditions)
+mdata_i$measurement <- "batchcl_reporter_intensity"
+mdata <- bind_rows(mdata, mdata_i)
+rm(mdata_i)
+
+mdata_i <- tidy(norm_dataE)
+mdata_i <- mdata_i %>%
+  mutate(value = 2 ^ value)
+names(mdata_i)[1] <- "Gene"
+names(mdata_i)[2] <- "ID"
+mdata_i <- left_join(mdata_i, conditions)
+mdata_i$measurement <- "norm_reporter_intensity"
+mdata <- bind_rows(mdata, mdata_i)
+rm(mdata_i)
+
+mdata_i <- tidy(ctrl.ratio_dataE)
+mdata_i <- mdata_i %>%
+  mutate(value = 2 ^ value)
+names(mdata_i)[1] <- "Gene"
+names(mdata_i)[2] <- "ID"
+mdata_i <- left_join(mdata_i, conditions)
+mdata_i$measurement <- "ctrl.ratio"
+mdata <- bind_rows(mdata, mdata_i)
+rm(mdata_i)
+
+mdata$condition <- factor(mdata$condition, ordered = TRUE, levels = c("CASE", "CTRL"))
+mdata$measurement <- factor(mdata$measurement, ordered = TRUE, levels = c("raw_reporter_intensity", "batchcl_reporter_intensity", "norm_reporter_intensity", "ctrl.ratio"))
+```
+
+# Data transformation overview
+
+```{r DataTransformationOverview, fig.height = 6}
+customPlot <- list(
+  theme_bw(base_size = 12), 
+  scale_shape_manual(values = 1:40)
+)
+library(RColorBrewer)
+mycolors <- colorRampPalette(brewer.pal(8, "Set2"))(40)
+
+ggplot(data = subset(mdata, !grepl("ratio", measurement)), aes(condition, log2(value))) +
+  geom_boxplot(aes(fill = rep)) +scale_fill_manual(values=mycolors)+
+  customPlot +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  facet_grid(. ~ measurement)
+ggsave(file.path(dir_save, paste0("Normalization_overview_", script.version, ".pdf")), width = 12, height = 5)
+
+ggplot(data = subset(mdata, grepl("ratio", measurement)), aes(condition, log2(value))) +
+  geom_boxplot(aes(fill = rep)) +scale_fill_manual(values=mycolors)+
+  customPlot +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  facet_grid(. ~ measurement, scale = "free")
+ggsave(file.path(dir_save, paste0("Normalization_overview_ratios_", script.version, ".pdf")), width = 6, height = 5)
+```
+
+# LIMMA analysis
+## Initialize limma results data
+
+```{r LimmaInitialization}
+limma_results <- NULL
+```
+
+## Run limma analysis
+
+```{r LimmaRun}
+# Export the different datasets
+write.table(exprs(raw_dataE),"/path/to/protein/data_analysis_results_V1/raw_data.txt",sep=";",quote=F,row.names = T,col.names = T)
+write.table(exprs(norm_dataE),"/path/to/protein/data_analysis_results_V1/normalized_data.txt",sep=";",quote=F,row.names = T,col.names = T)
+write.table(exprs(batchcl_dataE),"/path/to/protein/data_analysis_results_V1/batch_corrected_data.txt",sep=";",quote=F,row.names = T,col.names = T)
+
+# remove PCA outliers
+limma_data <- norm_dataE[, !(sampleNames(norm_dataE) %in% c("CASE_rep_ID1_1","CASE_rep_ID2"))]
+limma_weights <- exprs(raw_dataE[, !(sampleNames(raw_dataE) %in% c("CASE_rep_ID1_1","CASE_rep_ID2"))])
+comparison.list <- c("CASE - CTRL")
+limma_weights <- ifelse(is.na(limma_weights), 0.01, 1)
+
+# Add further covariate data to the limma analysis
+pheno <- pData(limma_data)
+pheno$SampleID <- gsub("_","",pheno$SampleID)
+
+# Import CUD phenotype data and add to pData
+pheno_CUD_all <- read.csv2("/path/to/pheno/CUD_randomised_20220707_layout.csv")
+colnames(pheno_CUD_all)[1]<-"SampleID"
+pheno_merged <- merge(pheno, pheno_CUD_all,by="SampleID")
+pheno_merged$pH[is.na(pheno_merged$pH)] <- 6.335
+rownames(pheno_merged) <- pheno_merged$ID
+pheno_merged <- pheno_merged[order(as.numeric(pheno_merged$SampleID),decreasing=F),]
+pheno_merged <- pheno_merged[match(rownames(pheno),rownames(pheno_merged)),]
+write.table(pheno_merged,"/path/to/protein/data_analysis_results_V1/pheno_merged_with_proteomics.txt",sep=";",quote=F,row.names = T,col.names = T)
+
+limma.PMI <- as.numeric(pheno_merged$PMI)
+limma.pH <- as.numeric(pheno_merged$pH)
+limma.Age <- as.numeric(pheno_merged$Age)
+limma.batch <- factor(pheno_merged$batch,ordered = FALSE)
+limma.cond <- factor(pheno_merged$condition, ordered = FALSE)
+
+contrast.matrix <- model.matrix( ~  0 + limma.cond + limma.batch + limma.pH + limma.PMI + limma.Age)
+colnames(contrast.matrix) <- gsub("limma.cond", "", colnames(contrast.matrix))
+
+limma.object <- eBayes(
+  contrasts.fit(
+    lmFit(limma_data, design = contrast.matrix, weights = limma_weights), 
+    makeContrasts(contrasts = comparison.list, levels = contrast.matrix)
+  )
+)
+rm(comparison.list, comparison, contrast.matrix, limma.cond, limma.rep, limma_data, limma_weights, limma.object)
+```
+
+## Volcano-plot
+
+```{r LimmaVolcanoPlot, fig.height = 7}
+limma_results$DE <- 
+  with(limma_results, ifelse(pvalue.limma < 0.05 & logFC > 0.07, "DE up p<0.05",
+                                 ifelse(pvalue.limma < 0.05 & logFC < -0.07, "DE down p<0.05", "n.s.")))
+limma_results$DE <- 
+  factor(limma_results$DE, 
+         ordered = TRUE, 
+         levels = c("DE up p<0.05","DE down p<0.05","n.s."))
+
+customPlot2 <- list(
+  theme_minimal(base_size = 12), 
+  scale_fill_manual(values=c("#E43F3F","#268989","gray80")), 
+  scale_colour_manual(values=c("#E43F3F","#268989","gray80"))
+)
+
+pdf("/path/to/protein/DE_volcano_manual_v1.pdf", width = 10, height = 6)
+ggplot(data = limma_results, aes(logFC, -log10(pvalue.limma), colour = DE)) +
+  geom_vline(aes(xintercept = 0)) + xlim(-1,1)+
+  geom_point() + geom_hline(aes(yintercept = -log10(0.05)),size=0.2) + geom_hline(aes(yintercept = -log10(1.17096e-05)),size=0.2,linetype="dashed")+
+  geom_text(aes(label = gsub("[|].+", "", Gene)), 
+            data = subset(limma_results, DE != "n.s."), 
+            vjust = 0, nudge_y = 0.1, size = 4, check_overlap = TRUE) +
+  xlab("log2(fold change)") + ylab("-log10(pvalue)") +
+  customPlot2
+dev.off()
+```
+
+## MA-plot
+
+```{r LimmaMA_plot, fig.height = 7}
+ggplot(data = limma_results, aes(AveExpr, logFC, colour = hit_annotation)) +
+  geom_hline(aes(yintercept = 0)) + 
+  geom_point() +
+  geom_text(aes(label = gsub("[|].+", "", Gene)), 
+            data = subset(limma_results, hit_annotation != "no hit"), 
+            vjust = 0, nudge_y = 0.1, size = 2, check_overlap = TRUE) + 
+  facet_wrap( ~ comparison + hit_annotation_method) +
+  xlab("average log2(reporter_intensity)") +
+  ylab("log2(fold change)") +
+  customPlot
+ggsave(file.path(dir_save, paste0("MA_plot_", script.version, ".pdf")), width = 7, height = 5)
+```
+
+##Total.Intensity-plot
+
+```{r LimmaAbundancePlot, fig.height = 7}
+limma_results$Total.Intensity <- limma_results$average.Total.Intensity
+ggplot(data = limma_results, aes(log2(Total.Intensity), logFC, colour = hit_annotation)) +
+  geom_hline(aes(yintercept = 0)) + 
+  geom_point() +
+  geom_text(aes(label = gsub("[|].+", "", Gene)), 
+            data = subset(limma_results, hit_annotation != "no hit"), 
+            vjust = 0, nudge_y = 0.1, size = 2, check_overlap = TRUE) + 
+  facet_wrap( ~ comparison + hit_annotation_method) +
+  ylab("log2(fold change)") +
+  customPlot
+ggsave(file.path(dir_save, paste0("Total.Intensity_plot_", script.version, ".pdf")), width = 7, height = 5)
+```
+
+## Save limma results
+
+```{r LimmaSave}
+write.csv(limma_results, file.path(dir_save, paste0("Limma_results_", script.version, ".csv")), row.names = FALSE)
+```
+

@@ -1,0 +1,12 @@
+#### Cellranger processing of raw fastq-files ####
+# Author: Eric Zillich
+# Last modification: 2024-09-13 EZ
+
+$ cd /home/user/
+
+cellranger loaded from /home/user/cellranger-7.1.0/ via
+$ export PATH="/home/user/cellranger-7.1.0:$PATH"
+
+# Code for running cellranger on raw sequencing data
+$ cellranger count --id=GEX --fastqs=/GEX/ --sample=GEX --transcriptome=/home/user/refdata-gex-GRCh38-2020-A --localcores 48 
+

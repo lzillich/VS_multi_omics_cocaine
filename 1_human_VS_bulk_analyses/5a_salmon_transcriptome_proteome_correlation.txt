@@ -1,0 +1,12 @@
+#### Alignment and quantification using salmon on the reference transcriptome - this is to generate TPM info for expr-protein correlation analysis ####
+# Author: Eric Zillich
+# Last modification: 2024-09-13 EZ
+
+1) index the reference transcriptome (GENCODE v.43) 
+$ cd /path/to/salmon-latest_linux_x86_64/bin/
+$ ./salmon index -t /path/to/reference/gencode.v43.transcripts.fa -i /path/to/reference/salmon_indexed_v43/v43_index --gencode
+
+2) align and quantify the RNA-seq fastq-files
+
+# Example code for quantification using salmon 
+./salmon quant -i /path/to/reference/salmon_indexed_v43/v43_index -l A -1 /path/to/RNA_raw_data/sample1_1.fq.gz -2 /path/to/RNA_raw_data/sample1_2.fq.gz -p 8 --validateMappings -o /path/to/RNA/2_salmon_quant/sample1

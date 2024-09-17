@@ -1,0 +1,173 @@
+---
+title: "CellChat analysis of snRNA-seq data in Astroyctes and MSNs - code adapted from vignettes https://htmlpreview.github.io/?https://github.com/jinworks/CellChat/blob/master/tutorial/CellChat-vignette.html and  https://htmlpreview.github.io/?https://github.com/jinworks/CellChat/blob/master/tutorial/Comparison_analysis_of_multiple_datasets.html"
+author: "Eric Zillich"
+date: "last modification EZ 2024-09-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(CellChat)
+library(patchwork)
+
+require(Seurat)
+require(data.table)
+library(Matrix)
+library(nichenetr)
+library(circlize)
+library(ComplexHeatmap)
+```
+
+
+```{r analysis CUD vs. ctrl, warning=FALSE, message=FALSE}
+seurat<-readRDS("/path/to/snRNAseq/2_data_processed/2_harmony_object.rds")
+# Convert v5 assay to v3 for making it compatible, remove other v5 assays
+options(Seurat.object.assay.version = "v3")
+seurat[["RNA2"]] <- as(object = seurat[["RNA"]], Class = "Assay")
+DefaultAssay(seurat) <- "RNA2"
+seurat[["RNA"]] <- NULL
+seurat[["origcounts"]] <- NULL
+set.seed(1234)
+
+Idents(seurat) <- "celltypes"
+seurat <- subset(seurat,idents=c( "Astrocyte" ,"D1-MSN", "D2-MSN"))
+
+mat <- seurat[["RNA2"]]@data
+meta <- seurat@meta.data
+```
+
+
+### Perform CellChat
+```{r cellchatanalysis CUD vs. ctrl, warning=FALSE, message=FALSE}
+options(stringsAsFactors = FALSE)
+
+# subset for CUD and Ctrl
+ids_CUD<- rownames(seurat@meta.data)[seurat$CUD=="CUD"]
+ids_Ctrl<- rownames(seurat@meta.data)[seurat$CUD=="Ctrl"]
+
+mat_CUD <- mat[,colnames(mat)%in%ids_CUD]
+meta_CUD <- seurat@meta.data[rownames(seurat@meta.data)[seurat$CUD=="CUD"],]
+
+mat_Ctrl <- mat[,colnames(mat)%in%ids_Ctrl]
+meta_Ctrl <- seurat@meta.data[rownames(seurat@meta.data)[seurat$CUD=="Ctrl"],]
+
+# CUD data
+cellchat <- createCellChat(object = mat_CUD, meta = meta_CUD, group.by = "celltypes")
+CellChatDB <- CellChatDB.human # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+CellChatDB.use <- CellChatDB 
+# set the used database in the object
+cellchat@DB <- CellChatDB.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+future::plan("multisession", workers = 20) # do parallel
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+ptm = Sys.time()
+cellchat <- computeCommunProb(cellchat, type = "triMean")
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP")
+saveRDS(cellchat, file = "3_results/NeuronChat/CellChat_CUD.rda")
+
+# Ctrl data 
+cellchat2 <- createCellChat(object = mat_Ctrl, meta = meta_Ctrl, group.by = "celltypes")
+CellChatDB <- CellChatDB.human # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+CellChatDB.use <- CellChatDB 
+# set the used database in the object
+cellchat2@DB <- CellChatDB.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat2 <- subsetData(cellchat2) # This step is necessary even if using the whole database
+future::plan("multisession", workers = 20) # do parallel
+cellchat2 <- identifyOverExpressedGenes(cellchat2)
+cellchat2 <- identifyOverExpressedInteractions(cellchat2)
+
+ptm = Sys.time()
+cellchat2 <- computeCommunProb(cellchat2, type = "triMean")
+cellchat2 <- filterCommunication(cellchat2, min.cells = 10)
+cellchat2 <- computeCommunProbPathway(cellchat2)
+cellchat2 <- aggregateNet(cellchat2)
+cellchat2 <- netAnalysis_computeCentrality(cellchat2, slot.name = "netP")
+saveRDS(cellchat2, file = "3_results/NeuronChat/CellChat_Ctrl.rda")
+
+# Merge the two objects
+object.list <- list(CUD = cellchat, Ctrl = cellchat2)
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+
+# DE analysis of ligand-receptor interactions
+
+# define a positive dataset, i.e., the dataset with positive fold change against the other dataset
+pos.dataset = "CUD"
+# define a char name used for storing the results of differential expression analysis
+features.name = paste0(pos.dataset, ".merged")
+
+# perform differential expression analysis 
+# Of note, compared to CellChat version < v2, CellChat v2 now performs an ultra-fast Wilcoxon test using the presto package, which gives smaller values of logFC. Thus we here set a smaller value of thresh.fc compared to the original one (thresh.fc = 0.1). Users can also provide a vector and dataframe of customized DEGs by modifying the cellchat@var.features$LS.merged and cellchat@var.features$LS.merged.info. 
+
+cellchat <- identifyOverExpressedGenes(cellchat, group.dataset = "datasets", pos.dataset = pos.dataset, features.name = features.name, only.pos = FALSE, thresh.pc = 0.1, thresh.fc = 0,thresh.p = 0.05, group.DE.combined = FALSE) 
+#> Use the joint cell labels from the merged CellChat object
+
+# map the results of differential expression analysis onto the inferred cell-cell communications to easily manage/subset the ligand-receptor pairs of interest
+net <- netMappingDEG(cellchat, features.name = features.name, variable.all = TRUE)
+# extract the ligand-receptor pairs with upregulated ligands in CUD
+net.up <- subsetCommunication(cellchat, net = net, datasets = "CUD",ligand.logFC = 0.07, receptor.logFC = 0.00001)
+# extract the ligand-receptor pairs with upregulated ligands and upregulated receptors in Ctrl, i.e.,downregulated in CUD
+net.down <- subsetCommunication(cellchat, net = net, datasets = "Ctrl",ligand.logFC = -0.07, receptor.logFC = -0.00001)
+
+gene.up <- extractGeneSubsetFromPair(net.up, cellchat)
+gene.down <- extractGeneSubsetFromPair(net.down, cellchat)
+write.table(net.up ,"3_results/NeuronChat/CellChat/up_LR.txt",quote=F,row.names = F, col.names = T,sep=",")
+write.table(net.down ,"3_results/NeuronChat/CellChat/down_LR.txt",quote=F,row.names = F, col.names = T,sep=",")
+
+
+# Chord diagram 
+pdf("3_results/NeuronChat/CellChat/CUD_up.pdf",width=10,height=10)
+netVisual_chord_gene(object.list[[1]], slot.name = 'net', net = net.up, lab.cex = 1, big.gap = 100,small.gap = 100,color.use=c("#F7AB64","#3A9BCC","#85CEE4"),reduce=0.0025)
+dev.off()
+
+pdf("3_results/NeuronChat/CellChat/CUD_down.pdf",width=12,height=12)
+netVisual_chord_gene(object.list[[2]], slot.name = 'net', net = net.down, lab.cex = 1, big.gap = 100,small.gap = 100,color.use=c("#F7AB64","#3A9BCC","#85CEE4"),reduce=0.0025)
+dev.off()
+
+# Pie plot of annotation categories 
+up <- data.frame(Annotation=names(table(net.up$annotation)),Count=as.vector(unname(table(net.up$annotation))))
+down <- data.frame(Annotation=names(table(net.down$annotation)),Count=as.vector(unname(table(net.down$annotation))))
+
+up$perc <- up$Count/sum(up$Count)*100
+up$perc2 <- paste0(as.character(round(up$perc,digits=1)),"%")
+down$perc <- down$Count/sum(down$Count)*100
+down$perc2 <- paste0(as.character(round(down$perc,digits=1)),"%")
+
+# Add label position
+up <- up %>%
+  arrange(desc(Annotation)) %>%
+  mutate(lab.ypos = cumsum(perc) - 0.5*perc)
+
+down <- down %>%
+  arrange(desc(Annotation)) %>%
+  mutate(lab.ypos = cumsum(perc) - 0.5*perc)
+
+p3 <- ggplot(up, aes(x = 2, y = perc, fill = Annotation)) +
+  geom_bar(stat = "identity", color = "white") +
+  coord_polar(theta = "y", start = 0)+
+  geom_text(aes(y = lab.ypos, label = perc2), color = "white",size=5)+
+  theme_void()+scale_fill_manual(values = magma(8)[c(2,3,5)]) +
+  xlim(0.5, 2.5)
+
+
+p4 <- ggplot(down, aes(x = 2, y = perc, fill = Annotation)) +
+ geom_bar(stat = "identity", color = "white") +
+coord_polar(theta = "y", start = 0)+
+geom_text(aes(y = lab.ypos, label = perc2), color = "white",size=5)+
+theme_void()+scale_fill_manual(values = magma(8)[c(2,3,6,5)]) +
+ xlim(0.5, 2.5)
+
+ggsave("3_results/NeuronChat/CellChat/Anno_up.pdf",p3,width=6,height=6)
+ggsave("3_results/NeuronChat/CellChat/Anno_down.pdf",p4,width=6,height=6)
+
+```

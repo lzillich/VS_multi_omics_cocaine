@@ -1,0 +1,1312 @@
+---
+title: "hdWGCNA of human scRNA-seq data and consensus hdWGCNA with Phillips et al. rat dataset - code adapted from https://smorabit.github.io/hdWGCNA/articles/ and https://github.com/smorabit/hdWGCNA_paper"
+author: "Eric Zillich"
+date: "last modification EZ 2024-09-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# single-cell analysis package
+library(Seurat)
+
+# plotting and data science packages
+library(tidyverse)
+library(cowplot)
+library(patchwork)
+
+# co-expression network analysis packages:
+library(WGCNA)
+library(hdWGCNA)
+
+library(Matrix)
+library(viridis)
+library(RColorBrewer)
+library(ggpubr)
+library(Hmisc)
+library(corrplot)
+library(enrichR)
+library(GeneOverlap)
+library(grid)
+library(gridExtra)
+library(igraph)
+library(ggrepel)
+
+# using the cowplot theme for ggplot
+theme_set(theme_cowplot())
+
+# set seed for reproducibility
+set.seed(12345)
+
+# optionally enable multithreading
+enableWGCNAThreads(nThreads = 20)
+```
+
+
+### Perform hdWGCNA
+```{r analysis CUD vs. ctrl, warning=FALSE, message=FALSE}
+seurat<-readRDS("/path/to/snRNAseq/2_data_processed/2_harmony_object.rds")
+
+# Convert v5 assay to v3 for making it compatible with hdWGCNA, remove other v5 assays
+options(Seurat.object.assay.version = "v3")
+seurat[["RNA2"]] <- as(object = seurat[["RNA"]], Class = "Assay")
+DefaultAssay(seurat) <- "RNA2"
+seurat[["RNA"]] <- NULL
+seurat[["origcounts"]] <- NULL
+
+
+# get list of each cell type
+groups <- as.character(unique(seurat$celltypes))
+groups <- groups[-c(8,10,12)]
+
+Idents(seurat) <- "celltypes"
+seurat <- subset(seurat,idents=groups)
+seurat$celltypes[seurat$celltypes %in% c("D1-MSN","D2-MSN")] <- "Inh_MSN"
+seurat$celltypes[seurat$celltypes %in% c("GABAergic-1","GABAergic-2","GABAergic-3")] <- "Inh_GABA"
+Idents(seurat) <- "celltypes"
+
+groups <- as.character(unique(seurat$celltypes))
+
+
+for(i in 1:length(groups)){
+
+  print(i)
+  cur_group <- as.character(groups[i])
+
+  # only run metacell aggregation one time
+  if(i == 1){
+    print('Setting up and running metacells')
+    # setup training data for scWGCNA:
+    seurat_obj <- SetupForWGCNA(
+      seurat,
+      gene_select = "fraction",
+      fraction = 0.05,
+      wgcna_name = cur_group
+    )
+
+    # construct metacells:
+    seurat_obj <- MetacellsByGroups(
+      seurat_obj = seurat_obj,
+      group.by = c("celltypes", "orig.ident"),
+      k = 25,
+      max_shared = 12,
+      reduction = 'harmony',
+      ident.group = 'celltypes'
+    )
+
+    seurat_obj <- NormalizeMetacells(seurat_obj)
+
+  } else{
+
+    seurat_obj  <- SetupForWGCNA(
+      seurat_obj,
+      gene_select = "fraction",
+      fraction = 0.05,
+      wgcna_name = cur_group,
+      metacell_location = groups[1]
+    )
+  }
+
+  # setup expression matrix
+  seurat_obj <- SetDatExpr(
+    seurat_obj,
+    group.by='celltypes',
+    group_name = cur_group
+  )
+
+  # construct network
+  seurat_obj <- TestSoftPowers(seurat_obj)
+  seurat_obj <- ConstructNetwork(seurat_obj, tom_name = cur_group,tom_outdir = "/home/user/WGCNA/VS_multiome/snRNA/",overwrite_tom = T)
+  seurat_obj <- ModuleEigengenes(seurat_obj, group.by.vars="orig.ident", wgcna_name = cur_group)
+  seurat_obj <- ModuleConnectivity(seurat_obj, group.by='celltypes', group_name = cur_group, wgcna_name = cur_group)
+
+  # rename the modules
+  seurat_obj <- ResetModuleNames(
+    seurat_obj,
+    new_name = paste0(cur_group, '-M'),
+    wgcna_name=cur_group
+  )
+
+}
+
+# save the output
+saveRDS(seurat_obj, file="/path/to/snRNAseq/2_data_processed/3_hdWGCNA_object.rds")
+
+```
+
+
+# Get modules
+
+```{r mod}
+data_dir <- "/path/to/VS_multiome/snRNAseq/3_results/hdWGCNA/"
+groups <- as.character(unique(seurat_obj$celltypes))
+modules <- do.call(rbind, lapply(groups, function(x){
+  m <- GetModules(seurat_obj, wgcna_name=x) %>% subset(module != 'grey')
+  m$group <- x
+  m %>% dplyr::select(c(gene_name, module, color, group))
+}))
+
+write.csv(modules, row.names=FALSE, quote=FALSE, file=paste0(data_dir, 'brain_modules.csv'))
+
+# Check for cell type specificity of modules by comparing MEs across clusters 
+length(table(modules$module)) # 90- grey = 89
+# Create results df 
+
+ME_summary <- matrix("",nrow=89,ncol=6)
+rownames(ME_summary) <- names(table(modules$module))[names(table(modules$module)) != "grey"]
+colnames(ME_summary) <- names(table(modules$group))
+ME_summary <- as.data.frame(ME_summary)
+
+me_ast <- GetMEs(seurat_obj,wgcna_name = "Astrocyte")
+me_OPC <- GetMEs(seurat_obj,wgcna_name = "OPC")
+me_Olig <- GetMEs(seurat_obj,wgcna_name = "Oligodendrocyte")
+me_Mic <- GetMEs(seurat_obj,wgcna_name = "Microglia")
+me_MSN <- GetMEs(seurat_obj,wgcna_name = "Inh_MSN")
+me_GABA <- GetMEs(seurat_obj,wgcna_name = "Inh_GABA")
+me_df <- list(me_ast,me_OPC,me_Olig,me_Mic,me_MSN,me_GABA)%>% map(rownames_to_column) %>% purrr::reduce(inner_join,by="rowname")
+me_df <- me_df[!(colnames(me_df) %in% colnames(me_df)[grep("grey",colnames(me_df))])]
+rownames(me_df) <- me_df$rowname
+me_df <- me_df[,-1]
+me_df <- merge(me_df,seurat_obj@meta.data,by=0)
+
+for(i in names(table(modules$group))){
+  for(j in rownames(ME_summary)){
+  ME_summary[j,i]<- mean(me_df[,j][me_df[,"celltypes"] == i]) 
+  }
+}
+
+# Add cell type with strongest expression 
+ME_summary$max <- ""
+
+for(i in 1:length(rownames(ME_summary))){
+  max_val <- sort(as.numeric(ME_summary[i,c(1:6)]),decreasing = T)[1]
+  ME_summary[i,"max"] <- colnames(ME_summary)[which(ME_summary[i,c(1:6)] == max_val)]
+}
+
+write.table(ME_summary,"/path/to/snRNAseq/3_results/hdWGCNA/ME_values_all.txt",quote=F,row.names = T, col.names = T,sep=";")
+
+# Subset for DME modules shown in the manuscript
+modules_dme <- modules[modules$module %in% c("Astrocyte-M12","Astrocyte-M14","Astrocyte-M18","Inh_MSN-M1","Inh_MSN-M2","Inh_MSN-M7","Inh_MSN-M10","Inh_GABA-M6"),]
+write.table(modules_dme,"/path/to/snRNAseq/3_results/hdWGCNA/Genes_in_DME_modules.txt",quote=F,row.names = T, col.names = T,sep=";")
+
+```
+ 
+#WGCNA downstream analyses
+```{r downstream}
+
+library(reshape2)
+library(igraph)
+
+groups <- as.character(unique(seurat_obj$celltypes))
+
+# plot the dendrograms
+pdf("/path/to/snRNAseq/3_results/hdWGCNA/dendro.pdf",height=3, width=6)
+for(cur_group in groups){
+    PlotDendrogram(seurat_obj, main=paste0(cur_group, ' Dendrogram'), wgcna_name=cur_group)
+}
+dev.off()
+
+# change TOM paths to correct location
+seurat_obj@misc$OPC$wgcna_net$TOMFiles <- "/path/to/snRNAseq/3_results/hdWGCNA/OPC_TOM.rda"
+seurat_obj@misc$Astrocyte$wgcna_net$TOMFiles <- "/path/to/snRNAseq/3_results/hdWGCNA/Astrocyte_TOM.rda"
+seurat_obj@misc$Oligodendrocyte$wgcna_net$TOMFiles <- "/path/to/snRNAseq/3_results/hdWGCNA/Oligodendrocyte_TOM.rda"
+seurat_obj@misc$Microglia$wgcna_net$TOMFiles <- "/path/to/snRNAseq/3_results/hdWGCNA/Microglia_TOM.rda"
+seurat_obj@misc$Inh_GABA$wgcna_net$TOMFiles <- "/path/to/snRNAseq/3_results/hdWGCNA/Inh_GABA_TOM.rda"
+seurat_obj@misc$Inh_MSN$wgcna_net$TOMFiles <- "/path/to/snRNAseq/3_results/hdWGCNA/Inh_MSN_TOM.rda"
+
+# module network plot
+for(cur_group in groups){
+  ModuleNetworkPlot(
+    seurat_obj,
+    mods = "all",
+    outdir = paste0(data_dir, cur_group, '_hubNetworks/'),
+    wgcna_name = cur_group
+  )
+}
+
+
+# plot the featureplots
+p_OPC <-ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='OPC', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf(paste0(data_dir, "ME_featureplots_OPC.pdf"),height=20, width=20)
+wrap_plots(p_OPC, ncol=5)
+dev.off()
+
+p_Inh_GABA <- ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1,raster_scale=0.25, wgcna_name='Inh_GABA', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf(paste0(data_dir, "ME_featureplots_Inh_GABA.pdf"),height=20, width=20)
+wrap_plots(p_Inh_GABA, ncol=5)
+dev.off()
+
+p_Inh_MSN <- ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1,raster_scale=0.25, wgcna_name='Inh_MSN', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf(paste0(data_dir, "ME_featureplots_Inh_MSN.pdf"),height=20, width=20)
+wrap_plots(p_Inh_MSN, ncol=5)
+dev.off()
+
+p_Oligodendrocyte <- ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='Oligodendrocyte', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf(paste0(data_dir, "ME_featureplots_Oligodendrocyte.pdf"),height=20, width=20)
+wrap_plots(p_Oligodendrocyte, ncol=5)
+dev.off()
+
+p_Microglia <- ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='Microglia', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf(paste0(data_dir, "ME_featureplots_Microglia.pdf"),height=20, width=20)
+wrap_plots(p_Microglia, ncol=5)
+dev.off()
+
+p_Astrocyte <- ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='Astrocyte', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf(paste0(data_dir, "ME_featureplots_Astrocyte.pdf"),height=20, width=20)
+wrap_plots(p_Astrocyte, ncol=5)
+dev.off()
+```
+
+Differential module eigengene (DME) analysis comparing CUD & Control in each cluster
+
+```{r eval=FALSE}
+
+group_col <- 'celltypes'
+groups <- c('OPC', 'Oligodendrocyte', 'Inh_GABA', 'Microglia', 'Inh_MSN', 'Astrocyte')
+DME_list <- list()
+
+for(cur_group in groups){
+  print(cur_group)
+  
+  g1 <- seurat_obj@meta.data[seurat_obj[[group_col]] == cur_group & seurat_obj$CUD == 'CUD',] %>% rownames
+  g2 <- seurat_obj@meta.data[seurat_obj[[group_col]] == cur_group & seurat_obj$CUD == 'Ctrl',] %>% rownames
+
+  DMEs <- FindDMEs(
+    seurat_obj,
+    barcodes1 = g1,
+    barcodes2 = g2,
+    test.use='wilcox',
+    wgcna_name=cur_group,
+    harmonized=TRUE
+  )
+  DMEs$group <- cur_group
+
+  # fix infs:
+  DMEs$avg_log2FC <- ifelse(abs(DMEs$avg_log2FC) == Inf, 0, DMEs$avg_log2FC)
+ 
+if(cur_group %in% c("Inh_GABA","Inh_MSN")){
+  DMEs$module <- factor(as.character(gsub("Inh-","Inh_",DMEs$module)))
+}
+else{
+  DMEs$module <- factor(as.character(DMEs$module))
+}
+  
+  DME_list[[cur_group]] <- DMEs
+  
+  
+  dmel <- PlotDMEsLollipop(
+  seurat_obj, 
+  DMEs, 
+  wgcna_name=cur_group, 
+  pvalue = "p_val_adj"
+)
+  ggsave(paste0(data_dir,cur_group,'_DME_l.pdf'),dmel, width=8, height=8)
+  
+  dmev  <-PlotDMEsVolcano(
+  seurat_obj,
+  DMEs,
+  wgcna_name = cur_group
+)
+  ggsave(paste0(data_dir,cur_group,'_DME_vol.pdf'),dmev, width=8, height=6)
+
+}
+
+DMEs <- do.call(rbind, DME_list)
+DMEs$group <- factor(
+  as.character(DMEs$group),
+  levels = groups
+)
+
+
+write.csv(DMEs, row.names=FALSE, quote=FALSE, file=paste0(data_dir, "CUD_DMEs.csv"))
+
+# Redefine functions 
+PlotDMEsLollipop2 <- function(
+  seurat_obj,
+  DMEs,
+  wgcna_name,
+  group.by=NULL,
+  comparison= NULL,
+  pvalue,
+  avg_log2FC = 'avg_log2FC'
+){
+
+  if (!require("ggforestplot")) {
+    print('Missing package: ggforestplot')
+    print('Installing package: ggforestplot')
+    devtools::install_github("NightingaleHealth/ggforestplot")
+  }
+
+  if(!(pvalue %in% colnames(DMEs))){
+  stop('Selected pvalue is not found in DMEs dataframe column names.')
+  }
+
+  if(missing(wgcna_name) || !(wgcna_name %in% names(seurat_obj@misc))){
+  stop('Please provide wgcna_name or the selected wgcna_name is not found in seurat_obj@misc.')
+  }
+
+  modules <- GetModules(seurat_obj, wgcna_name) %>% 
+    subset(module != 'grey') %>% 
+    mutate(module=droplevels(module))
+
+  if (!missing(group.by) & !missing(comparison)) {
+    comparisons <- comparison
+    if(!(all(comparisons %in% DMEs[[group.by]]))){
+    stop('Not all selected comparisons are not found in DMEs[[group.by]] or the comparison column, DMEs[[group.by]], is not correctly supplied.')
+    }
+
+    # comparisons <- unique(DMEs$comparison)
+    plot_list <- list()
+
+    for(cur_comp in comparisons){
+
+        print(cur_comp)
+
+        # cur_DMEs <- DMEs %>% filter(DMEs[[group.by]] == cur_comp)
+        cur_DMEs <- subset(DMEs, DMEs[[group.by]] == cur_comp)
+        # provide title
+        cur_title <- cur_comp
+        #
+        p <- PlotLollipop(modules, cur_DMEs, pvalue, avg_log2FC = 'avg_log2FC')
+
+        p <- p + ggtitle(cur_title) + NoLegend() 
+
+        plot_list[[cur_comp]] <- p
+
+      }
+
+  } else if (missing(group.by) && !missing(comparison)) { # Using && instead of & ensures that the second condition is only evaluated if the first condition is TRUE.
+
+    stop('The group.by column is not provided in the DMEs data, and comparison cannot be found.')
+
+  } else if (!missing(group.by) && missing(comparison)) { # Using && instead of & ensures that the second condition is only evaluated if the first condition is TRUE.
+
+    if (!(group.by %in% names(DMEs))) {
+    stop('The group.by column is not found in the DMEs data.')
+    }
+
+    comparisons <- unique(DMEs[[group.by]])
+
+    plot_list <- list()
+
+    for(cur_comp in comparisons){
+
+        print(cur_comp)
+
+        # cur_DMEs <- DMEs %>% filter(DMEs[[group.by]] == cur_comp)
+        cur_DMEs <- subset(DMEs, DMEs[[group.by]] == cur_comp)
+        # provide title
+        cur_title <- cur_comp
+
+        # set plotting attributes for shape
+        p <- PlotLollipop(modules, cur_DMEs, pvalue, avg_log2FC = 'avg_log2FC')
+
+        p <- p + ggtitle(cur_title) + NoLegend() 
+
+        plot_list[[cur_comp]] <- p
+
+      }
+
+  } else{
+    # this is for the condition: missing(group.by) && missing(comparison)
+    print('Please be aware comparison group/groups are not provided, which may casue an ERROR. PlotDMEsLollipop function will automatically assume all values are within the same group.')
+
+    plot_list <- list()
+
+    cur_DMEs <- DMEs
+
+    # set plotting attributes for shape
+    p <- PlotLollipop(modules, cur_DMEs, pvalue, avg_log2FC = 'avg_log2FC')
+
+    p <- p + NoLegend()
+
+    plot_list <- p
+
+  }
+
+  return(plot_list)
+}
+
+PlotLollipop <- function(
+  modules,
+  cur_DMEs,
+  pvalue,
+  avg_log2FC = 'avg_log2FC'
+){
+#
+    # cur_DMEs <- DMEs
+
+    # set plotting attributes for shape
+    cur_DMEs$shape <- ifelse(cur_DMEs[[pvalue]] < 0.05, 21, 4) # 21 cicle; 4 X
+    cur_DMEs <- cur_DMEs %>% arrange(avg_log2FC, descending=TRUE)
+    cur_DMEs$module <- factor(as.character(cur_DMEs$module), levels=as.character(cur_DMEs$module))
+
+    # add number of genes per module
+    n_genes <- table(modules$module)
+    cur_DMEs$n_genes <- as.numeric(n_genes[as.character(cur_DMEs$module)])
+
+    mod_colors <- dplyr::select(modules, c(module, color)) %>% distinct
+    cp <- mod_colors$color; names(cp) <- mod_colors$module
+
+    p <- cur_DMEs %>%
+    ggplot(aes(y=module, x=avg_log2FC, size=log(n_genes), color=module)) +
+    geom_vline(xintercept=0, color='black') +
+    geom_segment(aes(y=module, yend=module, x=0, xend=avg_log2FC), linewidth=0.5, alpha=0.3) +
+    geom_point() +
+    geom_point(shape=cur_DMEs$shape, color='black', fill=NA) +
+    scale_color_manual(values=cp, guide='none') +
+    ylab('') +
+    xlab(bquote("Avg. log"[2]~"(Fold Change)")) +
+    theme(
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.title = element_text(hjust=0.5, face='plain', size=10)
+    )
+
+    return(p)
+
+}
+
+# Figures
+dmel <- PlotDMEsLollipop2(
+  seurat_obj, 
+  CUD_DMEs[CUD_DMEs$group=="Astrocyte",], 
+  wgcna_name="Astrocyte", 
+  pvalue = "p_val_adj")+xlim(-1,2.5)
+  
+ggsave("3_results/hdWGCNA/Astro_lollipop.pdf",dmel, width=8, height=5)
+dmel2 <- PlotDMEsLollipop2(
+  seurat_obj, 
+  CUD_DMEs[CUD_DMEs$group=="Inh_MSN",], 
+  wgcna_name="Inh_MSN", 
+  pvalue = "p_val_adj")+xlim(-1,2.8)
+ggsave("3_results/hdWGCNA/Inh_MSN_lollipop.pdf",dmel2, width=8, height=5)
+  
+dmel3 <- PlotDMEsLollipop2(
+  seurat_obj, 
+  CUD_DMEs[CUD_DMEs$group=="Inh_GABA",], 
+  wgcna_name="Inh_GABA", 
+  pvalue = "p_val_adj")+xlim(-1,1)
+ggsave("3_results/hdWGCNA/Inh_GABA_lollipop.pdf",dmel3, width=8, height=5)
+
+```
+
+Enrichment analyses
+
+```{r mod_enr, warning=FALSE, message=FALSE}
+dbs <-c('GO_Biological_Process_2021','GO_Cellular_Component_2021','GO_Molecular_Function_2021', 'KEGG_2021_Human')
+
+# compute GO terms:
+groups <- as.character(unique(seurat_obj$celltypes))
+enrich_list <- list()
+
+for(cur_group in groups){
+  seurat_obj <- RunEnrichr(seurat_obj, dbs=dbs, wgcna_name=cur_group)
+  enrichr_df <- GetEnrichrTable(seurat_obj, wgcna_name=cur_group) %>% subset(P.value < 0.05)
+  enrichr_df$cell_type <- cur_group
+  enrich_list[[cur_group]] <- enrichr_df
+  
+  EnrichrBarPlot(
+  seurat_obj,
+  #outdir = paste0(data_dir,"enrichr_plots/",cur_group), # name of output directory
+  n_terms = 20, # number of enriched terms to show (sometimes more show if there are ties!!!)
+  plot_size = c(5,10), # width, height of the output .pdfs
+  logscale=TRUE, wgcna_name=cur_group) # do you want to show the enrichment as a log scale?
+}
+
+enrich_df <- do.call(rbind, enrich_list)
+write.table(enrichr_df, quote=FALSE, sep='\t', row.names=FALSE, file=paste0(data_dir, 'CUD_enrichr.tsv'))
+
+# Make GO/KEGG enrichment plots 
+
+# Astrocyte
+
+terms_ast<-GetEnrichrTable(seurat_obj,wgcna_name = "Astrocyte")
+terms_ast_GO<-terms_ast[terms_ast$db %in% c("GO_Biological_Process_2021","GO_Cellular_Component_2021","GO_Molecular_Function_2021"),]
+terms_ast_KEGG<-terms_ast[terms_ast$db %in% c("KEGG_2021_Human"),]
+
+#  Astrocyte-M12
+m12 <- terms_ast_GO[terms_ast_GO$module=="Astrocyte-M12",]
+m12_full <- m12[order(m12$Combined.Score,decreasing = T),][c(1:10),]
+m12 <- m12[order(m12$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m12k <- terms_ast_KEGG[terms_ast_KEGG$module=="Astrocyte-M12",]
+m12_k_full <- m12k[order(m12k$Combined.Score,decreasing = T),][c(1:10),]
+m12k <- m12k[order(m12k$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m12 <- rbind(m12,m12k)
+m12$Term[c(1:10)] <- gsub(".{13}$","",m12$Term[c(1:10)])
+m12$db[c(1:10)]<-"GO"
+m12$db[c(11:20)]<-"KEGG"
+write.table(m12_full, "3_results/hdWGCNA/enrichr_plots/m12_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m12_k_full, "3_results/hdWGCNA/enrichr_plots/m12_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+#  Astrocyte-M14
+m14 <- terms_ast_GO[terms_ast_GO$module=="Astrocyte-M14",]
+m14_full <- m14[order(m14$Combined.Score,decreasing = T),][c(1:10),]
+m14 <- m14[order(m14$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m14k <- terms_ast_KEGG[terms_ast_KEGG$module=="Astrocyte-M14",]
+m14_k_full <- m14k[order(m14k$Combined.Score,decreasing = T),][c(1:10),]
+m14k <- m14k[order(m14k$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m14 <- rbind(m14,m14k)
+m14$Term[c(1:10)] <- gsub(".{13}$","",m14$Term[c(1:10)])
+m14$db[c(1:10)]<-"GO"
+m14$db[c(11:20)]<-"KEGG"
+write.table(m14_full, "3_results/hdWGCNA/enrichr_plots/m14_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m14_k_full, "3_results/hdWGCNA/enrichr_plots/m14_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+#  Astrocyte-M18
+m18 <- terms_ast_GO[terms_ast_GO$module=="Astrocyte-M18",]
+m18_full <- m18[order(m18$Combined.Score,decreasing = T),][c(1:10),]
+m18k <- terms_ast_KEGG[terms_ast_KEGG$module=="Astrocyte-M18",]
+m18_k_full <- m18k[order(m18k$Combined.Score,decreasing = T),][c(1:10),]
+write.table(m18_full, "3_results/hdWGCNA/enrichr_plots/m18_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m18_k_full, "3_results/hdWGCNA/enrichr_plots/m18_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+# Inh_MSN
+terms_msn<-GetEnrichrTable(seurat_obj,wgcna_name = "Inh_MSN")
+terms_msn_GO<-terms_msn[terms_msn$db %in% c("GO_Biological_Process_2021","GO_Cellular_Component_2021","GO_Molecular_Function_2021"),]
+terms_msn_KEGG<-terms_msn[terms_msn$db %in% c("KEGG_2021_Human"),]
+
+# Inh_MSN-M1
+m1 <- terms_msn_GO[terms_msn_GO$module=="Inh_MSN-M1",]
+m1_full <- m1[order(m1$Combined.Score,decreasing = T),][c(1:10),]
+m1k <- terms_msn_KEGG[terms_msn_KEGG$module=="Inh_MSN-M1",]
+m1_k_full <- m1k[order(m1k$Combined.Score,decreasing = T),][c(1:10),]
+write.table(m1_full, "3_results/hdWGCNA/enrichr_plots/m1_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m1_k_full, "3_results/hdWGCNA/enrichr_plots/m1_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+# Inh_MSN-M2
+m2 <- terms_msn_GO[terms_msn_GO$module=="Inh_MSN-M2",]
+m2_full <- m2[order(m2$Combined.Score,decreasing = T),][c(1:10),]
+m2 <- m2[order(m2$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m2k <- terms_msn_KEGG[terms_msn_KEGG$module=="Inh_MSN-M2",]
+m2_k_full <- m2k[order(m2k$Combined.Score,decreasing = T),][c(1:10),]
+m2k <- m2k[order(m2k$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m2 <- rbind(m2,m2k)
+m2$Term[c(1:10)] <- gsub(".{13}$","",m2$Term[c(1:10)])
+m2$db[c(1:10)]<-"GO"
+m2$db[c(11:20)]<-"KEGG"
+write.table(m2_full, "3_results/hdWGCNA/enrichr_plots/m2_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m2_k_full, "3_results/hdWGCNA/enrichr_plots/m2_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+# Inh_MSN-M7
+m7 <- terms_msn_GO[terms_msn_GO$module=="Inh_MSN-M7",]
+m7_full <- m7[order(m7$Combined.Score,decreasing = T),][c(1:10),]
+m7 <- m7[order(m7$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m7k <- terms_msn_KEGG[terms_msn_KEGG$module=="Inh_MSN-M7",]
+m7_k_full <- m7k[order(m7k$Combined.Score,decreasing = T),][c(1:10),]
+m7k <- m7k[order(m7k$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m7 <- rbind(m7,m7k)
+m7$Term[c(1:10)] <- gsub(".{13}$","",m7$Term[c(1:10)])
+m7$db[c(1:10)]<-"GO"
+m7$db[c(11:20)]<-"KEGG"
+write.table(m7_full, "3_results/hdWGCNA/enrichr_plots/m7_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m7_k_full, "3_results/hdWGCNA/enrichr_plots/m7_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+# Inh_MSN-M10
+m10 <- terms_msn_GO[terms_msn_GO$module=="Inh_MSN-M10",]
+m10_full <- m10[order(m10$Combined.Score,decreasing = T),][c(1:10),]
+m10k <- terms_msn_KEGG[terms_msn_KEGG$module=="Inh_MSN-M10",]
+m10_k_full <- m10k[order(m10k$Combined.Score,decreasing = T),][c(1:10),]
+write.table(m10_full, "3_results/hdWGCNA/enrichr_plots/m10_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m10_k_full, "3_results/hdWGCNA/enrichr_plots/m10_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+# Inh_GABA
+terms_gaba<-GetEnrichrTable(seurat_obj,wgcna_name = "Inh_GABA")
+terms_gaba_GO<-terms_gaba[terms_gaba$db %in% c("GO_Biological_Process_2021","GO_Cellular_Component_2021","GO_Molecular_Function_2021"),]
+terms_gaba_KEGG<-terms_gaba[terms_gaba$db %in% c("KEGG_2021_Human"),]
+
+# Inh_GABA-M6
+m6 <- terms_gaba_GO[terms_gaba_GO$module=="Inh_GABA-M6",]
+m6_full <- m6[order(m6$Combined.Score,decreasing = T),][c(1:10),]
+m6k <- terms_gaba_KEGG[terms_gaba_KEGG$module=="Inh_GABA-M6",]
+m6_k_full <- m6k[order(m6k$Combined.Score,decreasing = T),][c(1:10),]
+write.table(m6_full, "3_results/hdWGCNA/enrichr_plots/M6_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m6_k_full, "3_results/hdWGCNA/enrichr_plots/M6_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+# Generate dot plots for the enrichment results
+
+library(cowplot)
+
+#Astrocyte-M12
+m12$Combined.Score <- log(m12$Combined.Score)
+position1 <- rev(m12$Term)
+
+p1 <- ggplot(data = m12[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="red") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(2,7)
+p2 <- ggplot(data = m12[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="red") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(2,7)
+
+pdf("3_results/hdWGCNA/enrichr_plots/M12_plot.pdf",width=10,height=9)
+plot_grid(p1,p2,ncol=1,align="v")
+dev.off()
+
+
+#Astrocyte-M14
+m14$Combined.Score <- log(m14$Combined.Score)
+position1 <- rev(m14$Term)
+
+p3 <- ggplot(data = m14[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="green") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(2,8)
+p4 <- ggplot(data = m14[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="green") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(2,8)
+
+pdf("3_results/hdWGCNA/enrichr_plots/M14_plot.pdf",width=10,height=9)
+plot_grid(p3,p4,ncol=1,align="v")
+dev.off()
+
+#Inh_MSN-M2
+m2$Combined.Score <- log(m2$Combined.Score)
+position1 <- rev(m2$Term)
+
+p5 <- ggplot(data = m2[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="turquoise") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(1,6)
+p6 <- ggplot(data = m2[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="turquoise") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(1,6)
+
+pdf("3_results/hdWGCNA/enrichr_plots/M2_plot.pdf",width=10,height=9)
+plot_grid(p5,p6,ncol=1,align="v")
+dev.off()
+
+#Inh_MSN-M7
+m7$Combined.Score <- log(m7$Combined.Score)
+position1 <- rev(m7$Term)
+
+p7 <- ggplot(data = m7[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="#FEE12B") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(2,7)
+p8 <- ggplot(data = m7[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="#FEE12B") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(2,7)
+
+pdf("3_results/hdWGCNA/enrichr_plots/M7_plot.pdf",width=10,height=9)
+plot_grid(p7,p8,ncol=1,align="v")
+dev.off()
+
+#Combined figure
+
+pdf("3_results/hdWGCNA/enrichr_plots/Main_module_GO_plot.pdf",width=12,height=18)
+plot_grid(p1,p2,p7,p8,ncol=1,align="v")
+dev.off()
+
+pdf("3_results/hdWGCNA/enrichr_plots/Supp_module_GO_plot.pdf",width=12,height=18)
+plot_grid(p3,p4,p5,p6,ncol=1,align="v")
+dev.off()
+
+```
+
+Consensus network analysis of human ans rat datasets
+```{r consensus, warning=FALSE, message=FALSE}
+rat_obj <- readRDS("/path/to/Phillips_VS_data/2_data_processed/2_harmony_object.rds")
+
+# Convert v5 assay to v3 for making it compatible with hdWGCNA, remove other v5 assay
+options(Seurat.object.assay.version = "v3")
+rat_obj[["RNA2"]] <- as(object = rat_obj[["RNA"]], Class = "Assay")
+DefaultAssay(rat_obj) <- "RNA2"
+rat_obj[["RNA"]] <- NULL
+
+# Rename the clusters to have similar annotation as in the human object
+
+Idents(rat_obj) <- "celltypes"
+# remove glutamatergic population, Olig2 and MSNs that were not detected in the human dataset
+rat_obj <- subset(rat_obj, idents=names(table(rat_obj$celltypes))[-c(2,6,8,9,12)])
+
+rat_obj$celltypes[grep("MSN",rat_obj$celltypes)] <- "Inh_MSN"
+rat_obj$celltypes[rat_obj$celltypes %in% c("Pvalb.int","Sst.int","GABA")] <- "Inh_GABA"
+rat_obj$celltypes[rat_obj$celltypes=="Olig1"] <- "Oligodendrocyte"
+rat_obj$celltypes[rat_obj$celltypes=="Polydend."] <- "OPC"
+
+
+# Get rat-human ortholog information
+convertHumanGeneList <- function(x){
+require("biomaRt")
+human = useMart("ensembl", dataset = "hsapiens_gene_ensembl",host="https://dec2021.archive.ensembl.org/")
+rat = useMart("ensembl", dataset = "rnorvegicus_gene_ensembl",host="https://dec2021.archive.ensembl.org/")
+genesV2 = getLDS(attributes = c("rgd_symbol"), filters = "rgd_symbol", values =x , mart = rat, attributesL = c("hgnc_symbol"), martL = human, uniqueRows=T)
+return(genesV2)
+}
+
+genes <- convertHumanGeneList(rownames(rat_obj))
+genes <- genes[!(duplicated(genes$RGD.symbol)),]
+
+# get the rat counts matrix, keep only genes with a human ortholog
+X_rat <- GetAssayData(rat_obj, slot='counts')
+X_rat <- X_rat[rownames(X_rat) %in% genes$RGD.symbol,]
+
+# rename rat genes to human ortholog
+ix <- match(rownames(X_rat), genes$RGD.symbol)
+converted_genes <- genes[ix,'HGNC.symbol']
+rownames(X_rat) <- converted_genes
+colnames(X_rat) <- paste0(colnames(X_rat), '_rat')
+X_rat <- X_rat[!duplicated(rownames(X_rat)),]
+
+seurat <- seurat_obj # human dataset
+
+# get the human counts matrix
+X_human <- GetAssayData(seurat, slot='counts')
+
+# what genes are in common?
+genes_common <- intersect(rownames(X_rat), rownames(X_human))
+X_human <- X_human[genes_common,]
+colnames(X_human) <- paste0(colnames(X_human), '_human')
+
+# make sure to only keep genes that are common in the rat and human datasets
+X_rat <- X_rat[genes_common,]
+
+# set up metadata table for rat
+rat_obj@meta.data$CUD <- ""
+rat_obj@meta.data$CUD[grep("Ctrl",colnames(X_rat))] <- "Ctrl"
+rat_obj@meta.data$CUD[grep("Cocaine",colnames(X_rat))] <- "CUD"
+
+rat_meta <- rat_obj@meta.data %>% dplyr::select(c(celltypes, CUD)) 
+rownames(rat_meta) <- colnames(X_rat)
+
+# set up metadata table for human
+human_meta <- seurat@meta.data %>% dplyr::select(c(orig.ident, CUD, celltypes))
+rownames(human_meta) <- colnames(X_human)
+
+# make rat seurat obj
+seurat_r <- CreateSeuratObject(X_rat, meta = rat_meta)
+seurat_h <- CreateSeuratObject(X_human, meta = human_meta)
+
+# merge:
+seurat_r$Species <- 'rat'
+seurat_h$Species <- 'human'
+seurat_merged <- merge(seurat_r, seurat_h)
+
+seurat_merged <- NormalizeData(seurat_merged)
+seurat_merged <- FindVariableFeatures(seurat_merged, nfeatures=3000)
+seurat_merged <- ScaleData(seurat_merged)
+seurat_merged <- RunPCA(seurat_merged,reduction.name = "pca_consensus")
+seurat_merged <- RunHarmony(seurat_merged, group.by.vars = 'Species', reduction.use='pca_consensus', dims=1:15)
+
+seurat_merged <- RunUMAP(seurat_merged, reduction = "harmony", dims = 1:15, reduction.name = "umap.harmony")
+
+DimPlot(seurat_merged, group.by='celltypes', split.by='Species', raster=FALSE, label=TRUE,reduction = "umap.harmony") + umap_theme()
+
+Idents(seurat_merged) <- "celltypes"
+
+groups <- as.character(unique(seurat_merged$celltypes))
+
+for(i in 1:length(groups)){
+  print(i)
+  cur_group <- as.character(groups[i])
+
+  # only run metacell aggregation one time
+  if(i == 1){
+    print('Setting up and running metacells')
+seurat_merged <- SetupForWGCNA(
+  seurat_merged,
+  gene_select = "fraction",
+  fraction = 0.05,
+  wgcna_name = paste0(cur_group,"_consensus")
+)
+
+# construct metacells:
+seurat_merged <- MetacellsByGroups(
+  seurat_merged,
+  group.by = c("celltypes", "orig.ident", 'Species'),
+  k = 25,
+  max_shared = 12,
+  min_cells = 50,
+  target_metacells = 250,
+  reduction = 'harmony',
+  ident.group = 'celltypes'
+)
+
+seurat_merged <- NormalizeMetacells(seurat_merged)} 
+else{seurat_merged  <- SetupForWGCNA(
+      seurat_merged,
+      gene_select = "fraction",
+      fraction = 0.05,
+      wgcna_name = paste0(cur_group,"_consensus"),
+      metacell_location = paste0(groups[1],"_consensus"))
+}
+
+# setup expression matrices for each species 
+seurat_merged <- SetMultiExpr(
+  seurat_merged,
+  group_name = cur_group,
+  group.by = "celltypes",
+  multi.group.by ="Species",
+  multi_groups = NULL, wgcna_name = paste0(cur_group,"_consensus")
+)
+
+# identify soft power thresholds
+seurat_merged <- TestSoftPowersConsensus(seurat_merged)
+
+# plot soft power results
+plot_list <-  PlotSoftPowers(seurat_merged,wgcna_name = paste0(cur_group,"_consensus"))
+consensus_groups <- unique(seurat_merged$Species)
+p_list <- lapply(1:length(consensus_groups), function(i){
+  cur_group <- consensus_groups[[i]]
+  plot_list[[i]][[1]] + ggtitle(paste0(cur_group)) + theme(plot.title=element_text(hjust=0.5))
+})
+wrap_plots(p_list, ncol=2)
+
+# consensus network analysis
+seurat_merged <- ConstructNetwork(
+  seurat_merged,
+  soft_power=c(7,7),
+  consensus=TRUE,
+  tom_name = paste0(cur_group,"_Species_Consensus"),wgcna_name = paste0(cur_group,"_consensus"),overwrite_tom = T
+)
+
+# plot the dendrogram
+PlotDendrogram(seurat_merged, main= paste0(cur_group," cross species dendrogram"),wgcna_name = paste0(cur_group,"_consensus"))
+}
+
+
+for(cur_group in groups){
+  # compute module eigengenes and connectivity
+seurat_merged <- ModuleEigengenes(seurat_merged, group.by.vars="Species",wgcna_name=paste0(cur_group,"_consensus"))
+seurat_merged <- ModuleConnectivity(seurat_merged, group_name =cur_group, group.by='celltypes',wgcna_name = paste0(cur_group,"_consensus"))
+
+# re-name modules
+seurat_merged <- ResetModuleNames(seurat_merged,wgcna_name = paste0(cur_group,"_consensus") , new_name = paste0(cur_group,"-CM"))
+}
+
+# Hub gene plots
+# module network plot
+for(cur_group in groups){
+  ModuleNetworkPlot(
+    seurat_merged,
+    mods = "all",
+    outdir = paste0("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/", cur_group, '_hubNetworks/'),
+    wgcna_name = paste0(cur_group,"_consensus")
+  )
+}
+
+
+# Differential module eigengene testing comparing CUD & Control in each cluster
+
+group_col <- 'celltypes'
+
+DME_list <- list()
+
+for(cur_group in groups){
+  print(cur_group)
+  
+  g1 <- seurat_merged@meta.data[seurat_merged[[group_col]] == cur_group & seurat_merged$CUD == 'CUD',] %>% rownames
+  g2 <- seurat_merged@meta.data[seurat_merged[[group_col]] == cur_group & seurat_merged$CUD == 'Ctrl',] %>% rownames
+
+  DMEs <- FindDMEs(
+    seurat_merged,
+    barcodes1 = g1,
+    barcodes2 = g2,
+    test.use='wilcox',
+    wgcna_name=paste0(cur_group,"_consensus"),
+    harmonized=TRUE
+  )
+  DMEs$group <- cur_group
+
+  # fix infs:
+  DMEs$avg_log2FC <- ifelse(abs(DMEs$avg_log2FC) == Inf, 0, DMEs$avg_log2FC)
+ 
+if(cur_group %in% c("Inh_GABA","Inh_MSN")){
+  DMEs$module <- factor(as.character(gsub("Inh-","Inh_",DMEs$module)))
+}
+else{
+  DMEs$module <- factor(as.character(DMEs$module))
+}
+  
+  DME_list[[cur_group]] <- DMEs
+  
+  
+  dmel <- PlotDMEsLollipop(
+  seurat_merged, 
+  DMEs, 
+  wgcna_name=paste0(cur_group,"_consensus"), 
+  pvalue = "p_val_adj"
+)
+  ggsave(paste0("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/",cur_group,'_DME_l.pdf'),dmel, width=8, height=8)
+  
+  dmev  <-PlotDMEsVolcano(
+  seurat_merged,
+  DMEs,
+  wgcna_name = paste0(cur_group,"_consensus")
+)
+  ggsave(paste0("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/",cur_group,'_DME_vol.pdf'),dmev, width=8, height=6)
+
+}
+
+DMEs <- do.call(rbind, DME_list)
+DMEs$group <- factor(
+  as.character(DMEs$group),
+  levels = groups
+)
+
+
+write.csv(DMEs, row.names=FALSE, quote=FALSE, file=paste0("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/", "CUD_DMEs.csv"))
+
+saveRDS(seurat_merged,"/path/to/Phillips_VS_data/2_data_processed/4_consensus_human_rat.rds")
+
+
+# Check for cell type specificity of modules by comparing MEs across clusters 
+groups_con <- paste0(as.character(unique(seurat_obj$celltypes)),"_consensus")
+modules_con <- do.call(rbind, lapply(groups_con, function(x){
+  m <- GetModules(seurat_merged, wgcna_name=x) %>% subset(module != 'grey')
+  m$group <- x
+  m %>% dplyr::select(c(gene_name, module, color, group))
+}))
+length(table(modules_con$module)) # 60- grey = 59
+# Create results df 
+
+ME_summary <- matrix("",nrow=59,ncol=6)
+rownames(ME_summary) <- names(table(modules_con$module))[names(table(modules_con$module)) != "grey"]
+colnames(ME_summary) <- gsub("_consensus","",names(table(modules_con$group)))
+ME_summary <- as.data.frame(ME_summary)
+
+me_ast <- GetMEs(seurat_merged,wgcna_name = "Astrocyte_consensus")
+me_OPC <- GetMEs(seurat_merged,wgcna_name = "OPC_consensus")
+me_Olig <- GetMEs(seurat_merged,wgcna_name = "Oligodendrocyte_consensus")
+me_Mic <- GetMEs(seurat_merged,wgcna_name = "Microglia_consensus")
+me_MSN <- GetMEs(seurat_merged,wgcna_name = "Inh_MSN_consensus")
+me_GABA <- GetMEs(seurat_merged,wgcna_name = "Inh_GABA_consensus")
+me_df <- list(me_ast,me_OPC,me_Olig,me_Mic,me_MSN,me_GABA)%>% map(rownames_to_column) %>% purrr::reduce(inner_join,by="rowname")
+me_df <- me_df[!(colnames(me_df) %in% colnames(me_df)[grep("grey",colnames(me_df))])]
+rownames(me_df) <- me_df$rowname
+me_df <- me_df[,-1]
+me_df <- merge(me_df,seurat_merged@meta.data,by=0)
+
+for(i in unique(me_df$celltypes)){
+  for(j in rownames(ME_summary)){
+  ME_summary[j,i]<- mean(me_df[,j][me_df[,"celltypes"] == i]) 
+  }
+}
+
+# Add cell type with strongest expression 
+ME_summary$max <- ""
+
+for(i in 1:length(rownames(ME_summary))){
+  max_val <- sort(as.numeric(ME_summary[i,c(1:6)]),decreasing = T)[1]
+  ME_summary[i,"max"] <- colnames(ME_summary)[which(ME_summary[i,c(1:6)] == max_val)]
+}
+
+write.table(ME_summary,"/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/ME_values_all.txt",quote=F,row.names = T, col.names = T,sep=";")
+
+# Subset for cell type specific DME modules in astrocytes and MSNs
+modules_dme <- modules_con[modules_con$module %in% c("Astrocyte-CM4","Astrocyte-CM6","Astrocyte-CM8","Inh_MSN-CM1","Inh_MSN-CM4","Inh_MSN-CM5","Inh_MSN-CM7","Inh_MSN-CM13"),]
+write.table(modules_dme,"/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/Genes_in_DME_modules.txt",quote=F,row.names = T, col.names = T,sep=";")
+
+# Plot modules in UMAP
+Idents(seurat_merged) <- "Species"
+seurat_merged_rat <- subset(seurat_merged,idents=c("rat"))
+seurat_merged_human <- subset(seurat_merged,idents=c("human"))
+
+p0 <- DimPlot(seurat_merged, group.by='celltypes', raster=FALSE, pt.size=0.000005,order=c("Inh_GABA","Inh_MSN","OPC","Oligodendrocyte","Microglia", "Astrocyte"),cols= c("#F7AB64","#74BA59","#70305A","#E8326D", "#3A9BCC","#006960"),reduction = "umap.harmony") + umap_theme()+ggtitle("Multi-species integration")
+p1 <- DimPlot(seurat_merged_rat, group.by='celltypes', raster=FALSE, pt.size=0.000005,order=c("Inh_GABA","Inh_MSN","OPC","Oligodendrocyte","Microglia", "Astrocyte"),cols= c("#F7AB64","#74BA59","#70305A","#E8326D", "#3A9BCC","#006960"),reduction = "umap.harmony") + umap_theme()+ggtitle("Rat - Phillips et al.")
+p2 <- DimPlot(seurat_merged_human, group.by='celltypes', raster=FALSE, pt.size=0.000005,order=c("Inh_GABA","Inh_MSN","OPC","Oligodendrocyte","Microglia", "Astrocyte"),cols= c("#F7AB64","#74BA59","#70305A","#E8326D", "#3A9BCC","#006960"),reduction = "umap.harmony") + umap_theme()+ggtitle("Human - DBCBB")
+p3 <- p0+p2+p1
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/UMAPs.pdf",height=5, width=17)
+p3
+dev.off()
+
+
+p_OPC <-ModuleFeaturePlot(seurat_merged, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='OPC_consensus', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/ME_featureplots_OPC.pdf",height=20, width=20)
+wrap_plots(c(list(p1),list(p2),list(p3),p_OPC), ncol=5)
+dev.off()
+
+p_Inh_GABA <- ModuleFeaturePlot(seurat_merged, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1,raster_scale=0.25, wgcna_name='Inh_GABA_consensus', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/ME_featureplots_Inh_GABA.pdf",height=20, width=20)
+wrap_plots(c(list(p1),list(p2),list(p3),p_Inh_GABA), ncol=5)
+dev.off()
+
+p_Inh_MSN <- ModuleFeaturePlot(seurat_merged, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1,raster_scale=0.25, wgcna_name='Inh_MSN_consensus', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/ME_featureplots_Inh_MSN.pdf",height=20, width=20)
+wrap_plots(c(list(p1),list(p2),list(p3),p_Inh_MSN), ncol=5)
+dev.off()
+
+p_Oligodendrocyte <- ModuleFeaturePlot(seurat_merged, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='Oligodendrocyte_consensus', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/ME_featureplots_Oligodendrocyte.pdf",height=20, width=20)
+wrap_plots(c(list(p1),list(p2),list(p3),p_Oligodendrocyte), ncol=5)
+dev.off()
+
+p_Microglia <- ModuleFeaturePlot(seurat_merged, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='Microglia_consensus', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/ME_featureplots_Microglia.pdf",height=20, width=20)
+wrap_plots(c(list(p1),list(p2),list(p3),p_Microglia), ncol=5)
+dev.off()
+
+p_Astrocyte <- ModuleFeaturePlot(seurat_merged, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='Astrocyte_consensus', restrict_range=FALSE,reduction = "umap.harmony")
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/ME_featureplots_Astrocyte.pdf",height=20, width=20)
+wrap_plots(c(list(p1),list(p2),list(p3),p_Astrocyte), ncol=5)
+dev.off()
+
+# Enrichment analysis 
+dbs <-c('GO_Biological_Process_2021','GO_Cellular_Component_2021','GO_Molecular_Function_2021', 'KEGG_2021_Human')
+
+# compute GO terms:
+groups <- as.character(unique(seurat_merged$celltypes))
+enrich_list <- list()
+
+for(cur_group in groups){
+  seurat_merged <- RunEnrichr(seurat_merged, dbs=dbs, wgcna_name=paste0(cur_group,"_consensus"))
+  enrichr_df <- GetEnrichrTable(seurat_merged, wgcna_name=paste0(cur_group,"_consensus")) %>% subset(P.value < 0.05)
+  enrichr_df$cell_type <- cur_group
+  enrich_list[[cur_group]] <- enrichr_df
+  
+  EnrichrBarPlot(
+  seurat_merged,
+  outdir = paste0("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/",cur_group), 
+  n_terms = 20,  
+  plot_size = c(5,15), 
+  logscale=TRUE, wgcna_name=paste0(cur_group,"_consensus"))
+}
+
+enrich_df <- do.call(rbind, enrich_list)
+write.table(enrichr_df, quote=FALSE, sep='\t', row.names=FALSE, file="/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/brain_enrichr.tsv")
+
+# Make GO/KEGG enrichment plots 
+dbs  <- c("GO_Biological_Process_2021","GO_Cellular_Component_2021","GO_Molecular_Function_2021","KEGG_2021_Human")
+seurat_merged <- RunEnrichr(seurat_merged, dbs=dbs, wgcna_name="Astrocyte_consensus")
+seurat_merged <- RunEnrichr(seurat_merged, dbs=dbs, wgcna_name="Inh_MSN_consensus")
+
+# Astrocyte
+terms_ast<-GetEnrichrTable(seurat_merged,wgcna_name = "Astrocyte_consensus")
+terms_ast_GO<-terms_ast[terms_ast$db %in% c("GO_Biological_Process_2021","GO_Cellular_Component_2021","GO_Molecular_Function_2021"),]
+terms_ast_KEGG<-terms_ast[terms_ast$db %in% c("KEGG_2021_Human"),]
+
+
+# Astrocyte-CM6
+m6 <- terms_ast_GO[terms_ast_GO$module=="Astrocyte-CM6",]
+m6_full <- m6[order(m6$Combined.Score,decreasing = T),][c(1:10),]
+m6 <- m6[order(m6$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m6k <- terms_ast_KEGG[terms_ast_KEGG$module=="Astrocyte-CM6",]
+m6_k_full <- m6k[order(m6k$Combined.Score,decreasing = T),][c(1:10),]
+m6k <- m6k[order(m6k$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m6 <- rbind(m6,m6k)
+m6$Term[c(1:10)] <- gsub(".{13}$","",m6$Term[c(1:10)])
+m6$db[c(1:10)]<-"GO"
+m6$db[c(11:20)]<-"KEGG"
+write.table(m6_full, "/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/m6a_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m6_k_full, "/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/m6a_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+
+#  Astrocyte-CM4
+m4a <- terms_ast_GO[terms_ast_GO$module=="Astrocyte-CM4",]
+m4a_full <- m4a[order(m4a$Combined.Score,decreasing = T),][c(1:10),]
+m4a <- m4a[order(m4a$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m4ak <- terms_ast_KEGG[terms_ast_KEGG$module=="Astrocyte-CM4",]
+m4_ak_full <- m4ak[order(m4ak$Combined.Score,decreasing = T),][c(1:10),]
+m4ak <- m4ak[order(m4ak$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m4a <- rbind(m4a,m4ak)
+m4a$Term[c(1:10)] <- gsub(".{13}$","",m4a$Term[c(1:10)])
+m4a$db[c(1:10)]<-"GO"
+m4a$db[c(11:20)]<-"KEGG"
+write.table(m4a_full, "/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/m4a_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m4_ak_full, "/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/m4a_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+
+# Astrocyte-CM8
+m8a <- terms_ast_GO[terms_ast_GO$module=="Astrocyte-CM8",]
+m8a_full <- m8a[order(m8a$Combined.Score,decreasing = T),][c(1:10),]
+m8a <- m8a[order(m8a$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m8ak <- terms_ast_KEGG[terms_ast_KEGG$module=="Astrocyte-CM8",]
+m8_ak_full <- m8ak[order(m8ak$Combined.Score,decreasing = T),][c(1:10),]
+m8ak <- m8ak[order(m8ak$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m8a <- rbind(m8a,m8ak)
+m8a$Term[c(1:10)] <- gsub(".{13}$","",m8a$Term[c(1:10)])
+m8a$db[c(1:10)]<-"GO"
+m8a$db[c(11:20)]<-"KEGG"
+write.table(m8a_full, "/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/m8a_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m8_ak_full, "/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/m8a_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+# Inh_MSN
+terms_msn<-GetEnrichrTable(seurat_merged,wgcna_name = "Inh_MSN_consensus")
+terms_msn_GO<-terms_msn[terms_msn$db %in% c("GO_Biological_Process_2021","GO_Cellular_Component_2021","GO_Molecular_Function_2021"),]
+terms_msn_KEGG<-terms_msn[terms_msn$db %in% c("KEGG_2021_Human"),]
+
+# Inh_MSN-CM4
+m4 <- terms_msn_GO[terms_msn_GO$module=="Inh_MSN-CM4",]
+m4_full <- m4[order(m4$Combined.Score,decreasing = T),][c(1:10),]
+m4 <- m4[order(m4$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m4k <- terms_msn_KEGG[terms_msn_KEGG$module=="Inh_MSN-CM4",]
+m4_k_full <- m4k[order(m4k$Combined.Score,decreasing = T),][c(1:10),]
+m4k <- m4k[order(m4k$Combined.Score,decreasing = T),][c(1:10),c(1,8,10)]
+m4 <- rbind(m4,m4k)
+m4$Term[c(1:10)] <- gsub(".{13}$","",m4$Term[c(1:10)])
+m4$db[c(1:10)]<-"GO"
+m4$db[c(11:20)]<-"KEGG"
+write.table(m4_full, "/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/m4_MSN_GO.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+write.table(m4_k_full, "/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/m4_MSN_KEGG.txt",quote=FALSE, sep='\t', row.names=FALSE, col.names = T)
+
+# Generate dot plots
+
+library(cowplot)
+
+#Astrocyte_CM6
+m6$Combined.Score <- log(m6$Combined.Score)
+position1 <- rev(m6$Term)
+
+p1 <- ggplot(data = m6[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="red") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(3,8)
+p2 <- ggplot(data = m6[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="red") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(3,7)
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/CM6_plot.pdf",width=10,height=9)
+plot_grid(p1,p2,ncol=1,align="v")
+dev.off()
+
+#Astrocyte-CM4
+m4a$Combined.Score <- log(m4a$Combined.Score)
+position1 <- rev(m4a$Term)
+
+p1 <- ggplot(data = m4a[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="brown") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(3,8)
+p2 <- ggplot(data = m4a[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="brown") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(3,7)
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/CM4astro_plot.pdf",width=14,height=9)
+plot_grid(p1,p2,ncol=1,align="v")
+dev.off()
+
+#Astrocyte-CM8
+m8a$Combined.Score <- log(m8a$Combined.Score)
+position1 <- rev(m8a$Term)
+
+p1 <- ggplot(data = m8a[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="black") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(3,8)
+p2 <- ggplot(data = m8a[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="black") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(3,7)
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/Cm8astro_plot.pdf",width=10,height=9)
+plot_grid(p1,p2,ncol=1,align="v")
+dev.off()
+
+#Inh_MSN-CM4
+m4$Combined.Score <- log(m4$Combined.Score)
+position1 <- rev(m4$Term)
+
+p1 <- ggplot(data = m4[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="blue") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(3,8)
+p2 <- ggplot(data = m4[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="blue") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(3,7)
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/enrichr_plots/CM4_plot.pdf",width=12,height=9)
+plot_grid(p1,p2,ncol=1,align="v")
+dev.off()
+
+#### GeneOverlap analysis of consensus module and human module genes ####
+
+seurat_merged <- readRDS("/path/to/Phillips_VS_data/2_data_processed/4_consensus_human_rat.rds")
+seurat_human <- readRDS("/path/to/snRNAseq/2_data_processed/3_hdWGCNA_object.rds")
+
+# Astrocyte
+ast_merged <- GetModules(seurat_merged,wgcna_name="Astrocyte_consensus") 
+ast_human <- GetModules(seurat_human,wgcna_name="Astrocyte") 
+
+ast_list_merged <-list(Astrocyte_CM4=ast_merged$gene_name[ast_merged$module=="Astrocyte-CM4"],Astrocyte_CM6=ast_merged$gene_name[ast_merged$module=="Astrocyte-CM6"],Astrocyte_CM8=ast_merged$gene_name[ast_merged$module=="Astrocyte-CM8"])
+ast_list_human <- list(Astrocyte_M12=ast_human$gene_name[ast_human$module=="Astrocyte-M12"],Astrocyte_M14=ast_human$gene_name[ast_human$module=="Astrocyte-M14"],Astrocyte_M18=ast_human$gene_name[ast_human$module=="Astrocyte-M18"])
+
+library(GeneOverlap)
+gom.obj <- newGOM(ast_list_human,ast_list_merged ,36588)
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/Astrocyte_gene_overlap.pdf",height=8, width=8)
+drawHeatmap(gom.obj,grid.col="Reds", note.col="black",adj.p = T,what=c("Jaccard"))
+dev.off()
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/Astrocyte_gene_overlap_white.pdf",height=8, width=8)
+drawHeatmap(gom.obj,grid.col="Reds", note.col="white",adj.p = T,what=c("Jaccard"))
+dev.off()
+
+# Inh_MSN
+MSN_merged <- GetModules(seurat_merged,wgcna_name="Inh_MSN_consensus") 
+MSN_human <- GetModules(seurat_human,wgcna_name="Inh_MSN") 
+
+MSN_list_merged <-list(Inh_MSN_CM1=MSN_merged$gene_name[MSN_merged$module=="Inh_MSN-CM1"],Inh_MSN_CM4=MSN_merged$gene_name[MSN_merged$module=="Inh_MSN-CM4"],Inh_MSN_CM5=MSN_merged$gene_name[MSN_merged$module=="Inh_MSN-CM5"],Inh_MSN_CM7=MSN_merged$gene_name[MSN_merged$module=="Inh_MSN-CM7"],Inh_MSN_CM13=MSN_merged$gene_name[MSN_merged$module=="Inh_MSN-CM13"])
+MSN_list_human <- list(Inh_MSN_M1=MSN_human$gene_name[MSN_human$module=="Inh_MSN-M1"],Inh_MSN_2=MSN_human$gene_name[MSN_human$module=="Inh_MSN-M2"],Inh_MSN_M7=MSN_human$gene_name[MSN_human$module=="Inh_MSN-M7"],Inh_MSN_M10=MSN_human$gene_name[MSN_human$module=="Inh_MSN-M10"])
+
+gom.obj <- newGOM( MSN_list_human,MSN_list_merged ,36588)
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/MSN_gene_overlap.pdf",height=8, width=9.5)
+drawHeatmap(gom.obj,grid.col="Reds", note.col="black",adj.p = T,what=c("Jaccard"))
+dev.off()
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/MSN_gene_overlap_white.pdf",height=8, width=9.5)
+drawHeatmap(gom.obj,grid.col="Reds", note.col="white",adj.p = T,what=c("Jaccard"))
+dev.off()
+
+# Inh_GABA
+
+GABA_merged <- GetModules(seurat_merged,wgcna_name="Inh_GABA_consensus") 
+GABA_human <- GetModules(seurat_human,wgcna_name="Inh_GABA") 
+
+GABA_list_merged <-list(Inh_GABA_CM1=GABA_merged$gene_name[GABA_merged$module=="Inh_GABA-CM1"],Inh_GABA_CM10=GABA_merged$gene_name[GABA_merged$module=="Inh_GABA-CM10"],Inh_GABA_CM16=GABA_merged$gene_name[GABA_merged$module=="Inh_GABA-CM16"])
+GABA_list_human <- list(Inh_GABA_M6=GABA_human$gene_name[GABA_human$module=="Inh_GABA-M6"],Inh_GABA_M6=GABA_human$gene_name[GABA_human$module=="Inh_GABA-M6"])
+
+gom.obj <- newGOM(GABA_list_merged , GABA_list_human,36588)
+
+pdf("/path/to/Phillips_VS_data/3_results/hdWGCNA/consensus/GABA_gene_overlap.pdf",height=7, width=6)
+drawHeatmap(gom.obj,grid.col="Reds", note.col="black",adj.p = T,what=c("Jaccard"))
+dev.off()
+```
+
+Overlap analysis DE genes within inferred modules 
+
+```{r DE_mod_overlap, warning=FALSE, message=FALSE}
+# Import DE genes 
+OPC <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOPC.csv")
+OPC_sig <- OPC[OPC$p_val_adj<0.05 & abs(OPC$avg_log2FC)>0.25 ,]
+OPC_sig_up <- OPC_sig$X[(OPC_sig$pct.1 > 0.25 | OPC_sig$pct.2 > 0.25) & OPC_sig$avg_log2FC>0]
+OPC_sig_down <- OPC_sig$X[(OPC_sig$pct.1 > 0.25 | OPC_sig$pct.2 > 0.25) & OPC_sig$avg_log2FC<0]
+
+Oligodendrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOligodendrocyte.csv")
+Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.05 & abs(Oligodendrocyte$avg_log2FC)>0.25,]
+Oligodendrocyte_sig_up <- Oligodendrocyte_sig$X[(Oligodendrocyte_sig$pct.1 > 0.25 | Oligodendrocyte_sig$pct.2 > 0.25) & Oligodendrocyte_sig$avg_log2FC>0]
+Oligodendrocyte_sig_down <- Oligodendrocyte_sig$X[(Oligodendrocyte_sig$pct.1 > 0.25 | Oligodendrocyte_sig$pct.2 > 0.25) & Oligodendrocyte_sig$avg_log2FC<0]
+
+Astrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterAstrocyte.csv")
+Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.05 & abs(Astrocyte$avg_log2FC)>0.25,]
+Astrocyte_sig_up <- Astrocyte_sig$X[(Astrocyte_sig$pct.1 > 0.25 | Astrocyte_sig$pct.2 > 0.25) & Astrocyte_sig$avg_log2FC>0]
+Astrocyte_sig_down <- Astrocyte_sig$X[(Astrocyte_sig$pct.1 > 0.25 | Astrocyte_sig$pct.2 > 0.25) & Astrocyte_sig$avg_log2FC<0]
+
+Microglia <- read.csv("/path/to/snRNAseq/3_results/DE/clusterMicroglia.csv")
+Microglia_sig <- Microglia[Microglia$p_val_adj<0.05 & abs(Microglia$avg_log2FC)>0.25,]
+Microglia_sig_up <- Microglia_sig$X[(Microglia_sig$pct.1 > 0.25 | Microglia_sig$pct.2 > 0.25) & Microglia_sig$avg_log2FC>0]
+Microglia_sig_down <- Microglia_sig$X[(Microglia_sig$pct.1 > 0.25 | Microglia_sig$pct.2 > 0.25) & Microglia_sig$avg_log2FC<0]
+
+
+GABAergic_1 <- read.csv("/path/to/snRNAseq/3_results/DE/clusterGABAergic-1.csv")
+GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.05 & abs(GABAergic_1$avg_log2FC)>0.25,]
+GABAergic_1_sig_up <- GABAergic_1_sig$X[(GABAergic_1_sig$pct.1 > 0.25 | GABAergic_1_sig$pct.2 > 0.25) & GABAergic_1_sig$avg_log2FC>0]
+GABAergic_1_sig_down <- GABAergic_1_sig$X[(GABAergic_1_sig$pct.1 > 0.25 | GABAergic_1_sig$pct.2 > 0.25) & GABAergic_1_sig$avg_log2FC<0]
+
+
+D2MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD2-MSN.csv")
+D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.05 & abs(D2MSN$avg_log2FC)>0.25,]
+D2MSN_sig_up <- D2MSN_sig$X[(D2MSN_sig$pct.1 > 0.25 | D2MSN_sig$pct.2 > 0.25) & D2MSN_sig$avg_log2FC>0]
+D2MSN_sig_down <- D2MSN_sig$X[(D2MSN_sig$pct.1 > 0.25 | D2MSN_sig$pct.2 > 0.25) & D2MSN_sig$avg_log2FC<0]
+
+D1MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD1-MSN.csv")
+D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.05 & abs(D1MSN$avg_log2FC)>0.25,]
+D1MSN_sig_up <- D1MSN_sig$X[(D1MSN_sig$pct.1 > 0.25 | D1MSN_sig$pct.2 > 0.25) & D1MSN_sig$avg_log2FC>0]
+D1MSN_sig_down <- D1MSN_sig$X[(D1MSN_sig$pct.1 > 0.25 | D1MSN_sig$pct.2 > 0.25) & D1MSN_sig$avg_log2FC<0]
+
+l_DE <- list(Astrocyte_up_DE=Astrocyte_sig_up,Astrocyte_down_DE=Astrocyte_sig_down,D1MSN_up_DE=D1MSN_sig_up,D1MSN_down_DE=D1MSN_sig_down,D2MSN_up_DE=D2MSN_sig_up,D2MSN_down_DE=D2MSN_sig_down,Inh_GABA_up_DE=GABAergic_1_sig_up,Inh_GABA_down_DE=GABAergic_1_sig_down)
+
+# Ast
+modules <- GetModules(seurat_obj,wgcna_name = "Astrocyte")
+g_ast_12 <- modules$gene_name[modules$module == "Astrocyte-M12"]
+g_ast_14 <- modules$gene_name[modules$module == "Astrocyte-M14"]
+g_ast_18 <- modules$gene_name[modules$module == "Astrocyte-M18"]
+
+# Inh_MSN
+modules <- GetModules(seurat_obj,wgcna_name = "Inh_MSN")
+g_Inh_MSN_1 <- modules$gene_name[modules$module == "Inh_MSN-M1"]
+g_Inh_MSN_2 <- modules$gene_name[modules$module == "Inh_MSN-M2"]
+g_Inh_MSN_7 <- modules$gene_name[modules$module == "Inh_MSN-M7"]
+g_Inh_MSN_10 <- modules$gene_name[modules$module == "Inh_MSN-M10"]
+
+# Inh_GABA
+modules <- GetModules(seurat_obj,wgcna_name = "Inh_GABA")
+g_Inh_GABA_6 <- modules$gene_name[modules$module == "Inh_GABA-M6"]
+
+l_hdWGCNA <- list(Astocyte_M12=g_ast_12,Astrocyte_M14=g_ast_14,Astrocyte_M18=g_ast_18,Inh_MSN_M1=g_Inh_MSN_1,Inh_MSN_M2=g_Inh_MSN_2,Inh_MSN_M7=g_Inh_MSN_7,Inh_MSN_M10=g_Inh_MSN_10,Inh_GABA_M6=g_Inh_GABA_6)
+
+library(GeneOverlap)
+gom.obj <- newGOM(l_DE, l_hdWGCNA,36588)
+
+pdf("/path/to/snRNAseq/3_results/hdWGCNA/DE_hdWGCNA_gene_overlap.pdf",height=8, width=12)
+drawHeatmap(gom.obj,grid.col="Reds", note.col="black",adj.p = T,what=c("Jaccard"))
+dev.off()
+
+pdf("/path/to/snRNAseq/3_results/hdWGCNA/DE_hdWGCNA_gene_overlap_white_label.pdf",height=8, width=12)
+drawHeatmap(gom.obj,grid.col="Reds", note.col="white",adj.p = T,what=c("Jaccard"))
+dev.off()
+
+
+```

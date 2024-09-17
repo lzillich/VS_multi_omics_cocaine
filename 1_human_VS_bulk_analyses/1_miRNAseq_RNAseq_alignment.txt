@@ -1,0 +1,95 @@
+#### Genome alignment of miRNA-sequencing data using STAR ####
+# Author: Eric Zillich
+# Last modification: 2024-09-10 EZ
+
+1) Genome indexing
+
+# Using hg38 genome (chr and scaffolds only i.e. primary assembly as recommended in STAR manual) was downloaded from Gencode (https://www.gencodegenes.org/human/) on 23/03/2023. First, a genome index needs to be built. Generally, the sjdbOverhang should be 1 base less than read length, for miRNAs, ENCODE (https://www.encodeproject.org/documents/b4ec4567-ac4e-4812-b2bd-e1d2df746966/@@download/attachment/ENCODE_miRNA-seq_STAR_parameters_v2.pdf) suggested to use 1. Comprehensive gene annotation (ALL) was downloaded as .gtf
+
+$ cd /path/to/reference/
+
+#miRNA Seq: 50bp read length 
+$ STAR --runThreadN 10 --runMode genomeGenerate --genomeDir ref_genome_miRNA/hg38 --genomeFastaFiles GRCh38.primary_assembly.genome.fa --sjdbGTFfile gencode.v43.primary_assembly.annotation.gtf --sjdbOverhang 49 
+
+2) Read trimming for miRNA fastq files using trim_galore
+
+$ conda activate cutadapt
+
+cd /path/to/miRNA/raw_data/
+FILES1=/path/to/miRNA/raw_data/DE*.fq.gz
+
+for f in $FILES1
+do
+    echo $f
+    trim_galore $f --length 18
+
+done
+
+echo "done!"
+
+
+# Move files to project folder
+
+$ cp /path/to/miRNA/raw_data/DE*_trimmed.fq.gz > /path/to/miRNA/raw_trimmed/
+
+# redo fastqc to check for remaining contaminant after trimming 
+cd /path/to/miRNA/raw_trimmed/
+$ fastqc /path/to/miRNA/raw_trimmed/DE*_trimmed.fq.gz -t 20
+
+3) Alignment of fastq files 
+
+# RNA alignment
+
+cd /path/to/miRNA/
+
+# miRNA alignment
+
+params=' --runThreadN 10
+--sjdbGTFfile /path/to/reference/GRCh38.miRNA.gtf
+--alignEndsType EndToEnd
+--outFilterMismatchNmax 1
+--outFilterMultimapScoreRange 0
+--quantMode TranscriptomeSAM GeneCounts
+--outReadsUnmapped Fastx
+--outSAMtype BAM SortedByCoordinate
+--outSAMunmapped Within
+--outFilterMultimapNmax 20
+--outFilterScoreMinOverLread 0
+--outFilterMatchNminOverLread 0
+--outFilterMatchNmin 16
+--alignSJDBoverhangMin 1000
+--alignIntronMax 1
+--outWigType wiggle
+--outWigStrand Stranded
+--outWigNorm RPM
+'
+
+# Example code for fastq mapping
+$ STAR --genomeDir /path/to/reference/ref_genome_miRNA/hg38 --readFilesIn <(gunzip -c /path/to/miRNA/raw_trimmed/sample1_trimmed.fq.gz) --outFileNamePrefix STAR_aligned/sample1_trimmed $params 
+
+#### Genome alignment of RNA-sequencing data using STAR ####
+
+Genome alignment RNA/miRNA Sequencing data using STAR
+
+1) Genome indexing
+$ cd /path/to/reference/
+
+#mRNA Seq: 101bp read length 
+$ STAR --runThreadN 10 --runMode genomeGenerate --genomeDir ref_genome_RNA/hg38 --genomeFastaFiles GRCh38.primary_assembly.genome.fa --sjdbGTFfile gencode.v43.primary_assembly.annotation.gtf --sjdbOverhang 100
+
+2) Alignment of fastq files 
+
+# RNA alignment
+
+$ conda activate scDRS
+
+cd /path/to/mRNA/
+
+# Example code for fastq mapping
+$ STAR --runThreadN 10 --genomeDir /path/to/reference/ref_genome_RNA/hg38 --readFilesIn <(gunzip -c /path/to/RNA_raw_data/sample1_1.fq.gz) <(gunzip -c /path/to/RNA_raw_data/sample1_2.fq.gz) --outSAMtype BAM SortedByCoordinate --quantMode GeneCounts --outFileNamePrefix /path/to/STAR_aligned/sample1
+
+
+
+
+
+

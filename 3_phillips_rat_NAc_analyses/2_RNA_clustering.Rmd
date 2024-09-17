@@ -1,0 +1,126 @@
+---
+title: "Analysis and Clustering of Phillips et al. snRNA-seq data (PMID: 36965548)"
+author: "Eric Zillich"
+date: "last modification EZ 2024-09-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(openxlsx)
+set.seed(42)
+```
+
+# Merge samples 
+```{r Step 1a: import filtered files}
+
+#read data post QC
+Cocaine <- readRDS("/path/to/Phillips_VS_data/2_data_processed/postQC/Cocaine.rds")
+Ctrl <- readRDS("/path/to/Phillips_VS_data/2_data_processed/postQC/Ctrl.rds")
+
+seurat <- merge(x = Cocaine, y = Ctrl, add.cell.ids = c("Cocaine","Ctrl"))
+
+saveRDS(seurat,"/path/to/Phillips_VS_data/2_data_processed/1_combined_object.rds")
+```
+
+
+```{r import QCed dataset, echo=FALSE}
+seurat <- readRDS("/path/to/Phillips_VS_data/2_data_processed/1_combined_object.rds")
+```
+
+```{r RNA analysis 1, echo=FALSE}
+DefaultAssay(seurat) <- "RNA"
+
+seurat <- NormalizeData(seurat) 
+seurat <- FindVariableFeatures(seurat,nfeatures = 3000)
+seurat <- ScaleData(seurat)
+seurat <- RunPCA(seurat) 
+seurat <- FindNeighbors(seurat, reduction = "pca", dims = 1:30)
+seurat <- FindClusters(seurat,resolution = 0.2)
+seurat <- RunUMAP(seurat, reduction = "pca", dims = 1:30)
+
+plot1 <- UMAPPlot(seurat, reduction="umap",group.by="orig.ident")
+plot2 <- UMAPPlot(seurat, reduction="umap", label = T)
+plot1
+plot2
+
+seurat <- IntegrateLayers(
+   object = seurat, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = FALSE
+)
+
+
+seurat <- FindNeighbors(seurat, reduction = "harmony", dims = 1:30)
+seurat <- FindClusters(seurat, resolution = 0.20, cluster.name = "harmony_clusters")
+seurat <- RunUMAP(seurat, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+p1 <- DimPlot(seurat,reduction = "umap.harmony")
+p1
+```
+
+
+## Celltype annotation according to Phillips et al. marker genes 
+```{r cell, echo=TRUE,out.width="100%",warning=FALSE, message=FALSE, results='hide'}
+seurat$celltypes <- as.character(seurat$seurat_clusters)
+DotPlot(seurat, features = c("Gad1","Drd1","Drd3","Grm8")) #0,3
+seurat$celltypes[seurat$celltypes=="0"] <- "Drd1-MSN"
+
+DotPlot(seurat, features = c("Drd2","Penk")) # 1 and 9
+seurat$celltypes[seurat$celltypes=="1"] <- "Drd2-MSN-1"
+seurat$celltypes[seurat$celltypes=="9"] <- "Drd2-MSN-2"
+
+DotPlot(seurat, features = c("Drd3")) # 10
+seurat$celltypes[seurat$celltypes=="10"] <- "Drd3-MSN"
+
+DotPlot(seurat, features = c("Grm8","Foxp2")) # 3
+seurat$celltypes[seurat$celltypes=="3"] <- "Grm8-MSN"
+
+DotPlot(seurat, features = c("Gad1","Elavl2","Grm8")) #5?
+seurat$celltypes[seurat$celltypes=="5"] <- "GABA"
+
+DotPlot(seurat, features = c("Gad1","Elavl2","Kit")) # 7
+seurat$celltypes[seurat$celltypes=="7"] <- "Pvalb.int"
+
+DotPlot(seurat, features = c("Gad1","Elavl2","Sst")) # 12
+seurat$celltypes[seurat$celltypes=="12"] <- "Sst.int"
+
+DotPlot(seurat, features = c("Slc17a7")) # 11
+seurat$celltypes[seurat$celltypes=="11"] <- "Glutamatergic"
+
+DotPlot(seurat, features = c("Mbp","Hapln2")) # 2,13
+seurat$celltypes[seurat$celltypes=="2"] <- "Olig1"
+seurat$celltypes[seurat$celltypes=="13"] <- "Olig2"
+
+DotPlot(seurat, features = c("Chat")) # 14
+seurat$celltypes[seurat$celltypes=="14"] <- "Chat.int"
+
+DotPlot(seurat, features = c("Gja1")) # 4
+seurat$celltypes[seurat$celltypes=="4"] <- "Astrocyte"
+
+DotPlot(seurat, features = c("Pdgfra")) # 6
+seurat$celltypes[seurat$celltypes=="6"] <- "Polydend."
+
+DotPlot(seurat, features = c("Arhgap15")) # 8
+seurat$celltypes[seurat$celltypes=="8"] <- "Microglia"
+
+
+Idents(seurat) <- "celltypes"
+
+DimPlot(seurat,reduction = "umap.harmony",label=T)
+```
+
+
+```{r save, echo=FALSE}
+Idents(seurat)<-"celltypes"
+DimPlot(seurat,label=T,reduction = "umap.harmony",label.size = 3)+NoLegend()
+
+saveRDS(seurat, "/path/to/Phillips_VS_data/2_data_processed/2_harmony_object.rds")
+```
+
+
+

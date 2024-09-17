@@ -1,0 +1,280 @@
+---
+title: "CIBERSORT reference generation and RNA-seq deconvolution analysis"
+author: "Eric Zillich"
+date: "last modification 2024/09/12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(Seurat)
+set.seed(42)
+```
+
+### Create CIBERSORT reference from snRNA-seq dataset
+```{r analysis, warning=FALSE, message=FALSE, results='hide'}
+seurat<-readRDS("/path/to/snRNAseq/2_data_processed/2_harmony_object.rds")
+seurat <- JoinLayers(seurat)
+seurat <- NormalizeData(seurat, normalization.method="RC",scale.factor=1e6)
+Idents(seurat)<-"celltypes"
+seurat <- subset(seurat,idents=c("OPC","Oligodendrocyte","Astrocyte","Microglia","D2-MSN","D1-MSN","GABAergic-1","GABAergic-2","GABAergic-3"))
+seurat$celltypes[seurat$celltypes %in% c("D2-MSN","D1-MSN")] <- "Inh-MSN"
+seurat$celltypes[seurat$celltypes %in% c("GABAergic-1","GABAergic-2","GABAergic-3")] <- "Inh-GABA"
+
+DefaultAssay(seurat) <- "RNA"
+Idents(seurat) <- "celltypes"
+
+# Extract counts slot - becomes reference sample file
+
+ldat <- LayerData(seurat,layer="data",assay="RNA")
+colnames(ldat) <- seurat$celltypes
+ldat2 <- as.matrix(ldat)
+
+# Marker genes need to be expressed at least 10 times more in one celltype compared to all others, so filter the genes based on this 
+celltypes  <- names(table(seurat$celltypes))
+res_list <- vector(mode="list",length=6)
+  names(res_list) <- celltypes
+  
+for(i in celltypes){
+  dat <- ldat2[,colnames(ldat2) == i]
+  res_list[[i]] <- rowMeans(dat)
+}
+
+res_df <- as.data.frame(res_list)
+res_df$include <- 0
+
+for(i in rownames(res_df)){
+ gene <- res_df[i,]
+ gene <- gene[order(gene,decreasing = T)]
+ tf <- gene[,1] > 10*(gene[,2])
+ res_df$include[rownames(res_df)== i] <- tf
+}
+
+res_df2 <- res_df[res_df$include == 1,c(1:6)] 
+
+ldat3 <- ldat2[rownames(ldat2) %in% rownames(res_df2),]
+m2 <- matrix("",nrow=nrow(ldat3),ncol=1)
+colnames(m2)<-"genes"
+m2[,1]<-rownames(ldat3)
+ldat4 <- cbind(m2,ldat3)
+colnames(ldat4) <- gsub("-","_",colnames(ldat4))
+
+write.table(ldat4,"/path/to/snRNAseq/2_data_processed/counts_table_CIBERSORT.txt",sep="\t",quote=F,row.names = F,col.names = T)
+
+# Create the phenoclasses file 
+ncol(ldat4) # 20493 (-1 =20492, ignore the "genes" column)
+cells <- unique(colnames(ldat4))[-1]
+
+pheclass <- matrix(0,nrow=6,ncol=20492)
+rownames(pheclass)<-cells
+
+to_test <-colnames(ldat4)[-1]
+
+for(i in 1:length(to_test)){
+phe <-pheclass[,i]
+test <- ifelse(to_test[i]==names(phe),1,2)
+pheclass[,i] <- test
+}
+
+write.table(pheclass,"/path/to/snRNAseq/2_data_processed/phenoclass_table_CIBERSORT.txt",sep="\t",quote=F,row.names = T,col.names = F)
+
+# In TERMINAL run with java: 
+
+#$ cd /path/to/snRNAseq/2_data_processed/
+#$ Rscript -e "library(Rserve);Rserve(args=\"--no-save --RS-conf /home/user/R/x86_64-pc-linux-gnu-library/4.2/Rserve/rserve_new.cfg\")" 
+#$ java -Xmx256g -Xms256g -jar /path/to/CIBERSORT/CIBERSORT_DISTRIUBTION/CIBERSORT.jar -P counts_table_CIBERSORT.txt -c phenoclass_table_CIBERSORT.txt -v
+```
+
+### Run CIBERSORT on bulk RNA-seq dataset
+```{r analysis2, warning=FALSE, message=FALSE, results='hide'}
+ source("/path/to/CIBERSORT/CIBERSORT.R")
+
+library(DESeq2)
+library(biomaRt)
+library(dplyr)
+library(data.table)
+library(readxl)
+library(readr)
+library(varhandle)
+library(pheatmap)
+library(RColorBrewer)
+library(EnhancedVolcano)
+library(qqman)
+
+
+#### 1. Import phenotype data ####
+pheno <- read.csv("/path/to/RNA/DE_results/pheno.txt", sep=";")
+#mean impute missing pH data 
+mean(pheno$pH,na.rm=T)
+pheno$pH[is.na(pheno$pH)] <- 6.335
+DT <- data.table
+DF <- data.frame
+
+#### 2. Import counts ####
+
+# CUD
+mRNA_CUD <- get(load("/path/to/RNA/quantified/mRNA_CUD_counts.Rdata"))
+colnames(mRNA_CUD$counts) <- gsub("Aligned.sortedByCoord.out.bam","",colnames(mRNA_CUD$counts))
+mRNA_CUD$targets <- gsub("Aligned.sortedByCoord.out.bam","",mRNA_CUD$targets)
+colnames(mRNA_CUD$stat) <- gsub("Aligned.sortedByCoord.out.bam","",colnames(mRNA_CUD$stat))
+
+mRNA_CUD_counts <- DF(mRNA_CUD$counts)
+
+#pheno
+rownames(pheno) <- pheno$rn
+
+#coldata
+coldata <- pheno[,-c(1,2)]
+coldata$CUD <- as.factor(coldata$CUD)
+coldata$Age <- scale(coldata$Age)
+coldata$PMI <- scale(coldata$PMI)
+coldata$RIN <- scale(coldata$RIN)
+coldata$pH <- scale(coldata$pH)
+
+#sort
+coldata <- coldata[colnames(mRNA_CUD_counts),]
+identical(colnames(mRNA_CUD_counts),rownames(coldata)) # must be TRUE
+
+## Specify model
+dds <- DESeqDataSetFromMatrix(countData = mRNA_CUD_counts,
+                              colData = coldata,
+                              design = ~ Age + RIN + pH + PMI + CUD)
+# CPM calculation
+norm_counts <- fpm(dds,robust = F)
+
+# Import self-made VS reference dataset from snRNA-seq in VS samples
+snRNA_VS_CIBERSORT <- read.delim("/path/to/snRNAseq/2_data_processed/phenoclass_table_CIBERSORT.counts_table_CIBERSORT.bm.K999.0.txt")
+rownames(snRNA_VS_CIBERSORT) <- snRNA_VS_CIBERSORT$NAME
+snRNA_VS_CIBERSORT <- snRNA_VS_CIBERSORT[,-1]
+
+# Apply CIBERSORT
+results <- CIBERSORT(snRNA_VS_CIBERSORT,norm_counts, QN=F, absolute=F)
+write.table(results,"/path/to/RNA/DE_downstream/CIBERSORT/Markers_CIBERSORT_snRNA_VS.txt",sep=";",quote=F)
+
+pheno_with_CUD_Ctrl <- read.csv("/path/to/RNA/DE_results/pheno_with_CUD_Ctrl.txt", sep=";")
+rownames(pheno_with_CUD_Ctrl) <- pheno_with_CUD_Ctrl$rn
+
+res_merge <- merge(pheno_with_CUD_Ctrl,results,by=0)
+res_merge2 <- res_merge[,c(5:10)]
+rownames(res_merge2) <-  res_merge[,4]
+res_merge2$sum <- rowSums(res_merge2)
+res_merge2 <- res_merge2[sort(rownames(res_merge2)),]
+write.table(res_merge2,"/path/to/RNA/DE_downstream/CIBERSORT/Estimates_final.txt",sep=";",quote=F)
+
+# Bayesian estimation of differences in cell type fractions 
+library(BayesianFirstAid)
+res_merge2 <- res_merge2[!(rownames(res_merge2) %in% c("CUD_3","CUD_9")),]
+
+# Astrocytes 
+astro_CUD <- res_merge2$Astrocyte[grep("CUD",rownames(res_merge2))]
+astro_Ctrl <- res_merge2$Astrocyte[grep("Ctrl",rownames(res_merge2))]
+fit <- bayes.t.test(astro_CUD, astro_Ctrl, paired = F,alternative = "two.sided",mu=mean(astro_CUD)-mean(astro_Ctrl))
+plot(fit) # 95% HDI -0.074  0.037
+
+# oligo
+oligo_CUD <- res_merge2$Oligodendrocyte[grep("CUD",rownames(res_merge2))]
+oligo_Ctrl <- res_merge2$Oligodendrocyte[grep("Ctrl",rownames(res_merge2))]
+fit <- bayes.t.test(oligo_CUD, oligo_Ctrl, paired = F,alternative = "two.sided",mu=mean(oligo_CUD)-mean(oligo_Ctrl))
+plot(fit) # 95% HDI -0.090  0.087
+
+# OPC
+OPC_CUD <- res_merge2$OPC[grep("CUD",rownames(res_merge2))]
+OPC_Ctrl <- res_merge2$OPC[grep("Ctrl",rownames(res_merge2))]
+fit <- bayes.t.test(OPC_CUD, OPC_Ctrl, paired = F,alternative = "two.sided",mu=mean(OPC_CUD)-mean(OPC_Ctrl))
+plot(fit) # 95% HDI -0.013  0.032
+
+# Microglia
+Microglia_CUD <- res_merge2$Microglia[grep("CUD",rownames(res_merge2))]
+Microglia_Ctrl <- res_merge2$Microglia[grep("Ctrl",rownames(res_merge2))]
+fit <- bayes.t.test(Microglia_CUD, Microglia_Ctrl, paired = F,alternative = "two.sided",mu=mean(Microglia_CUD)-mean(Microglia_Ctrl))
+plot(fit) # 95% HDI -0.023  0.044
+
+# Inh_MSN
+Inh_MSN_CUD <- res_merge2$Inh_MSN[grep("CUD",rownames(res_merge2))]
+Inh_MSN_Ctrl <- res_merge2$Inh_MSN[grep("Ctrl",rownames(res_merge2))]
+fit <- bayes.t.test(Inh_MSN_CUD, Inh_MSN_Ctrl, paired = F,alternative = "two.sided",mu=mean(Inh_MSN_CUD)-mean(Inh_MSN_Ctrl))
+plot(fit) # 95% HDI -0.044  0.042
+
+# Inh_GABA
+Inh_GABA_CUD <- res_merge2$Inh_GABA[grep("CUD",rownames(res_merge2))]
+Inh_GABA_Ctrl <- res_merge2$Inh_GABA[grep("Ctrl",rownames(res_merge2))]
+fit <- bayes.t.test(Inh_GABA_CUD, Inh_GABA_Ctrl, paired = F,alternative = "two.sided",mu=mean(Inh_GABA_CUD)-mean(Inh_GABA_Ctrl))
+plot(fit) # 95% HDI -0.023  0.017
+
+# prepare results for plotting
+pheno <- read.csv("/path/to/RNA/DE_results/pheno.txt", sep=";")
+pheno <- pheno[,c("Brain_ID","rn","CUD")]
+pheno <- pheno[order(pheno$CUD,decreasing=T),]
+pheno$CUD[pheno$CUD == "1"] <- paste0("CUD_",c(1:19))
+pheno$CUD[pheno$CUD == "0"] <- paste0("Ctrl_",c(1:21))
+write.table(pheno,"/path/to/RNA/DE_results/pheno_with_CUD_Ctrl.txt",quote=F,row.names = T,col.names = T,sep=";")
+
+rownames(pheno) <-pheno$rn
+
+res2 <- merge(pheno,results,by=0)
+rownames(res2) <- res2$CUD
+
+res3 <- res2[,c(5:10)]
+
+perc_df <- data.frame(samples=rep(rownames(res3),each=6),celltypes=rep(colnames(res3),times=40),value=as.vector(t(res3)))
+perc_df$samples <- factor(perc_df$samples, levels=pheno$CUD)
+
+# Plot the fraction of celltypes 
+per <- ggplot(perc_df, aes(fill=celltypes, y=value, x=samples)) + 
+  geom_bar(position="fill", stat="identity")+theme(element_text(size=10))+scale_fill_manual(values=c("#F7AB64","#74BA59","#70305A","#E8326D", "#3A9BCC","#85CEE4"))+ylab("celltype proportion")+xlab(NULL)+
+  theme_minimal()+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+ggsave(plot = per,filename = "/path/to/RNA/DE_downstream/CIBERSORT/celltype_percentage.pdf", width = 10, height=4)
+
+# Correlate the estimation with the snRNA celltype percentages 
+library(Seurat)
+seurat<-readRDS("/path/to/snRNAseq/2_data_processed/2_harmony_object.rds")
+seurat <- JoinLayers(seurat)
+Idents(seurat) <- "orig.ident"
+
+seurat$orig.ident[seurat$orig.ident =="GEX1"] <- "ID1"
+seurat$orig.ident[seurat$orig.ident =="GEX2"] <- "ID2"
+seurat$orig.ident[seurat$orig.ident =="GEX3"] <- "ID3"
+seurat$orig.ident[seurat$orig.ident =="GEX4"] <- "ID4"
+seurat$orig.ident[seurat$orig.ident =="GEX5"] <- "ID5"
+seurat$orig.ident[seurat$orig.ident =="GEX6"] <- "ID6"
+seurat$orig.ident[seurat$orig.ident =="GEX7"] <- "ID7"
+seurat$orig.ident[seurat$orig.ident =="GEX8"] <- "ID8"
+seurat$orig.ident[seurat$orig.ident =="GEX9"] <- "ID9"
+seurat$orig.ident[seurat$orig.ident =="GEX10"] <- "ID10"
+seurat$orig.ident[seurat$orig.ident =="GEX11"] <- "ID11"
+seurat$orig.ident[seurat$orig.ident =="GEX12"] <- "ID12"
+seurat$orig.ident[seurat$orig.ident =="GEX13"] <- "ID13"
+seurat$orig.ident[seurat$orig.ident =="GEX14"] <- "ID14"
+seurat$orig.ident[seurat$orig.ident =="GEX15"] <- "ID15"
+seurat$orig.ident[seurat$orig.ident =="GEX16"] <- "ID16"
+
+dist <- as.data.frame.matrix(table(seurat$orig.ident,seurat$celltypes))
+dist <- dist[,colnames(dist) %in% c("Astrocyte","D1-MSN","D2-MSN","GABAergic-1","GABAergic-2","GABAergic-3","Microglia","Oligodendrocyte","OPC")]
+dist$Inh_MSN <- rowSums(dist[,c("D1-MSN","D2-MSN")])
+dist$Inh_GABA <- rowSums(dist[,c("GABAergic-1","GABAergic-2","GABAergic-3")])
+dist <- dist[,c("Astrocyte","Inh_MSN","Inh_GABA","Microglia","Oligodendrocyte","OPC")]
+dist$sum <- rowSums(dist)
+
+for(i in rownames(dist)){
+  for(j in colnames(dist)[c(1:6)]){
+    dist[i,j] <- dist[i,j]/dist[i,"sum"]
+  }
+}
+
+dist <- dist[,-7]
+
+# subset CIBERSORT prediction 
+res2_1 <-  res2[res2$Brain_ID %in% paste0(c("ID"),c(1:16)),c(2,5:10)]
+rownames(res2_1) <- res2_1$Brain_ID
+res2_1 <- res2_1[,-1]
+
+res2_1<-res2_1[match(rownames(dist),rownames(res2_1)),match(colnames(dist),colnames(res2_1))]
+
+# perform correlation analysis 
+diag <- diag(cor(t(res2_1), t(dist), method = "pearson")) 
+ 
+df_cor <- data.frame(Sample=names(diag),R=unname(diag))
+
+library(ggpubr)
+p1 <- ggdotchart(df_cor, x = "Sample", y = "R", ggtheme = theme_pubr(base_size = 10), add = "segment", ylim = c(0, 1), ylab = "Corrleation CIBERSORT estimates - snRNAseq celltype proportion (Pearson R)")+theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())+xlab("snRNA seq samples (N=16)")+geom_hline(aes(yintercept = median(df_cor$R)),size=0.5,linetype="dashed")+ggtitle("Median R = 0.86")
+ggsave(plot = p1,filename = "/path/to/RNA/DE_downstream/CIBERSORT/Comparison_snRNA_vs_CIBERSORT.pdf", width = 5, height=5)
+```
