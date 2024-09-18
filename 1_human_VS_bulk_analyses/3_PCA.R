@@ -240,6 +240,7 @@ dev.off()
 #### Proteomics ####
 # For objects raw_dataE, norm_dataE, and ctrl.ratio_dataE, see 4_Proteomics.Rmd
 
+# Proteomics PCA function by Frank Stein (EMBL)
 sets <- list("raw data" = raw_dataE, "batchcl data" = batchcl_dataE, "norm data" = norm_dataE, "ctrl.ratio data" = ctrl.ratio_dataE)
 PCA_data <- NULL
 for (i in seq_along(sets)) {
