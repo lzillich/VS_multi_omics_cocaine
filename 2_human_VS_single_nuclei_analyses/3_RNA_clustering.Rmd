@@ -1,7 +1,7 @@
 ---
 title: "Analysis and Clustering of snRNA-seq data"
 author: "Eric Zillich"
-date: "last modification EZ 2024-09-13"
+date: "last modification EZ 2024-12-04"
 output: html_document
 ---
 
@@ -289,6 +289,10 @@ seurat$celltypes[seurat$celltypes=="6"] <- "GABAergic-1"
 seurat$celltypes[seurat$celltypes=="7"] <- "GABAergic-2"
 seurat$celltypes[seurat$celltypes=="8"] <- "GABAergic-3"
 
+# Other GABAergic clusters
+genes_gaba <- c("GAD1","GAD2","DRD1","ADARB2","CXCL14","CDH10","PTHLH","THSD4","NPY","SST","VIP","CCK","TAC3","PTPRK","TMEM163","GFRA2","CHAT","DRD2","HTR7","GRIK3","PTPRT")
+FeaturePlot(seurat, features = genes_gaba,reduction = "umap.harmony")
+DotPlot(seurat, features=genes_gaba)
 ```
 
 ## Lymphocytes

@@ -1,7 +1,7 @@
 ---
 title: "Differential expression and GO enrichment analyses of snRNA-seq data"
 author: "Eric Zillich"
-date: "last modification EZ 2024-09-13"
+date: "last modification EZ 2024-12-04"
 output: html_document
 ---
 
@@ -85,43 +85,43 @@ write.csv(markers_cl, paste0("/path/to/snRNAseq/3_results/DE/cluster",i,".csv"),
 ```{r hm_GEX,warning=FALSE, message=FALSE, results='hide'}
 # Import DE results - log2FC 0.5 cutoff and padj 0.05, only celltypes with more than 100 cells from each condition
 OPC <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOPC.csv")
-OPC_sig <- OPC[OPC$p_val_adj<0.05 & abs(OPC$avg_log2FC)>0.25 ,]
+OPC_sig <- OPC[OPC$p_val_adj<0.001& abs(OPC$avg_log2FC)>0.5 ,]
 OPC_sig <- OPC_sig[OPC_sig$pct.1 > 0.25 | OPC_sig$pct.2 > 0.25, ]
 OPC_top10 <- OPC_sig$X[order(abs(OPC_sig$avg_log2FC),decreasing = T)][c(1:10)]
 write.table(OPC_sig,"/path/to/snRNAseq/3_results/DE/OPC_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
 
 Oligodendrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOligodendrocyte.csv")
-Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.05 & abs(Oligodendrocyte$avg_log2FC)>0.25,]
+Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.001& abs(Oligodendrocyte$avg_log2FC)>0.5,]
 Oligodendrocyte_sig <- Oligodendrocyte_sig[Oligodendrocyte_sig$pct.1 > 0.25 | Oligodendrocyte_sig$pct.2 > 0.25, ]
 Oligodendrocyte_top10 <- Oligodendrocyte_sig$X[order(abs(Oligodendrocyte_sig$avg_log2FC),decreasing = T)][c(1:10)]
 write.table(Oligodendrocyte_sig,"/path/to/snRNAseq/3_results/DE/Oligodendrocyte_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
 
 Astrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterAstrocyte.csv")
-Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.05 & abs(Astrocyte$avg_log2FC)>0.25,]
+Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.001& abs(Astrocyte$avg_log2FC)>0.5,]
 Astrocyte_sig <- Astrocyte_sig[Astrocyte_sig$pct.1 > 0.25 | Astrocyte_sig$pct.2 > 0.25, ]
 Astrocyte_top10 <- Astrocyte_sig$X[order(abs(Astrocyte_sig$avg_log2FC),decreasing = T)][c(1:10)]
 write.table(Astrocyte_sig,"/path/to/snRNAseq/3_results/DE/Astrocyte_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
 
 Microglia <- read.csv("/path/to/snRNAseq/3_results/DE/clusterMicroglia.csv")
-Microglia_sig <- Microglia[Microglia$p_val_adj<0.05 & abs(Microglia$avg_log2FC)>0.25,]
+Microglia_sig <- Microglia[Microglia$p_val_adj<0.001& abs(Microglia$avg_log2FC)>0.5,]
 Microglia_sig <- Microglia_sig[Microglia_sig$pct.1 > 0.25 | Microglia_sig$pct.2 > 0.25, ]
 Microglia_top10 <- Microglia_sig$X[order(abs(Microglia_sig$avg_log2FC),decreasing = T)][c(1:10)]
 write.table(Microglia_sig,"/path/to/snRNAseq/3_results/DE/Microglia_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
 
 GABAergic_1 <- read.csv("/path/to/snRNAseq/3_results/DE/clusterGABAergic-1.csv")
-GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.05 & abs(GABAergic_1$avg_log2FC)>0.25,]
+GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.001& abs(GABAergic_1$avg_log2FC)>0.5,]
 GABAergic_1_sig <- GABAergic_1_sig[GABAergic_1_sig$pct.1 > 0.25 | GABAergic_1_sig$pct.2 > 0.25, ]
 GABAergic_1_top10 <- GABAergic_1_sig$X[order(abs(GABAergic_1_sig$avg_log2FC),decreasing = T)][c(1:10)]
 write.table(GABAergic_1_sig,"/path/to/snRNAseq/3_results/DE/GABAergic_1_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
 
 D2MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD2-MSN.csv")
-D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.05 & abs(D2MSN$avg_log2FC)>0.25,]
+D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.001& abs(D2MSN$avg_log2FC)>0.5,]
 D2MSN_sig <- D2MSN_sig[D2MSN_sig$pct.1 > 0.25 | D2MSN_sig$pct.2 > 0.25, ]
 D2MSN_top10 <- D2MSN_sig$X[order(abs(D2MSN_sig$avg_log2FC),decreasing = T)][c(1:10)]
 write.table(D2MSN_sig,"/path/to/snRNAseq/3_results/DE/D2MSN_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
 
 D1MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD1-MSN.csv")
-D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.05 & abs(D1MSN$avg_log2FC)>0.25,]
+D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.001& abs(D1MSN$avg_log2FC)>0.5,]
 D1MSN_sig <- D1MSN_sig[D1MSN_sig$pct.1 > 0.25 | D1MSN_sig$pct.2 > 0.25, ]
 D1MSN_top10 <- D1MSN_sig$X[order(abs(D1MSN_sig$avg_log2FC),decreasing = T)][c(1:10)]
 write.table(D1MSN_sig,"/path/to/snRNAseq/3_results/DE/D1MSN_sig.txt",quote=F,row.names = F,col.names = T,sep=";")
@@ -254,12 +254,12 @@ dfs_l2FC <- dfs_l2FC[,-1]
 dfs_p <- dfs_p[,-1]
 
 # structural component of ribosome genes
-ribo <- gsub("/",";",both_GO@compareClusterResult[1,"geneID"])
-ribo <- unlist(strsplit(ribo, ";"))
+ribo <- gsub("/",";",both_GO@compareClusterResult$geneID[both_GO@compareClusterResult$Description=="structural constituent of ribosome"])
+ribo <- unique(unlist(strsplit(ribo, ";")))
 
 # electron transfer activity genes
-nadh <- gsub("/",";",both_GO@compareClusterResult[3,"geneID"])
-nadh <- unlist(strsplit(nadh, ";"))
+nadh <- gsub("/",";",both_GO@compareClusterResult$geneID[both_GO@compareClusterResult$Description=="electron transfer activity"])
+nadh <- unique(unlist(strsplit(nadh, ";")))
 
 # Create log2FC hms
 hm_ribo_genes <- dfs_l2FC[rownames(dfs_l2FC) %in% ribo,]
@@ -272,8 +272,8 @@ hm_nadh_genes <- dfs_l2FC[rownames(dfs_l2FC) %in% nadh,]
  ## Create pval hms
  
  makeStars <- function(x){
-  stars <- c( "***", "**", "*","")
-  vec <- c(0, 0.001, 0.01, 0.05,1.01)
+  stars <- c("*","")
+  vec <- c(0,0.001,1.01)
   i <- findInterval(x, vec)
   stars[i]
  }
@@ -291,13 +291,20 @@ colnames(hm_nadh_genes_star) <-  colnames(hm_nadh_genes_p)
 library(RColorBrewer)
 library(pheatmap)
 
-pdf("/path/to/snRNAseq/3_results/Hm_ribosomal_genes.pdf",width=6,height=12)
-pheatmap(hm_ribo_genes, breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_ribo_genes_star,number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ribosomal genes")
+pdf("/path/to/snRNAseq/3_results/Hm_ribosomal_genes1.pdf",width=6,height=14)
+pheatmap(hm_ribo_genes[c(1:32),], breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_ribo_genes_star[c(1:32),],number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ribosomal genes")
+dev.off()
+
+pdf("/path/to/snRNAseq/3_results/Hm_ribosomal_genes2.pdf",width=6,height=14)
+pheatmap(hm_ribo_genes[c(33:64),], breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_ribo_genes_star[c(33:64),],number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ribosomal genes")
 dev.off()
 
 # ETC includes genes from NADH dehydrogenase and cytochrom c oxidase 
-pdf("/path/to/snRNAseq/3_results/Hm_etc_genes.pdf",width=6,height=12)
-pheatmap(hm_nadh_genes, breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_nadh_genes_star,number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ETC genes")
+pdf("/path/to/snRNAseq/3_results/Hm_etc_genes1.pdf",width=6,height=12)
+pheatmap(hm_nadh_genes[c(1:10),], breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_nadh_genes_star[c(1:10),],number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ETC genes")
 dev.off()
 
+pdf("/path/to/snRNAseq/3_results/Hm_etc_genes2.pdf",width=6,height=12)
+pheatmap(hm_nadh_genes[c(11:19),], breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_nadh_genes_star[c(11:19),],number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ETC genes")
+dev.off()
 ```

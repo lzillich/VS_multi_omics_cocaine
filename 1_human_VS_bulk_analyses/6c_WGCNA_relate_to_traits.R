@@ -1,7 +1,7 @@
 ## Data Preparation WGCNA 
 ## Code based on WGCNA tutorials by Langfelder & Horvath
 # Adapted by Lea Zillich and Eric Zillich 
-# last change: EZ 2024-09-12
+# last change: EZ 2024-12-04
 
 library(WGCNA)
 library(data.table)
@@ -135,12 +135,50 @@ dir0 <- "/path/to/RNA"
   setwd(dir0)
   nGenes = ncol(datExpr);
   nSamples = nrow(datExpr);
-  # RecCUDulate MEs with color labels
+  # Recalculate MEs with color labels
   MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
   MEs = orderMEs(MEs0)
   moduleTraitCor = cor(MEs, datTraits, use = "p")
   moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
   write.table(MEs, file = "DE_downstream/WGCNA/MEs_Expr_filtered.txt", sep = ";", quote = F, row.names = T)
+  
+  # Regression analysis for the modules showing significant correlation with CUD status
+  ME_reg_dat <- merge(MEs,datTraits, by=0)
+  ME_reg_dat$CUD <- as.factor(ME_reg_dat$CUD)
+  mods <- colnames(MEs)
+  beta_mat <- matrix(0, nrow=5,ncol=length(mods))
+  colnames(beta_mat)<-mods
+  rownames(beta_mat) <- colnames(datTraits)[1:5]
+  p_mat <- matrix(0, nrow=5,ncol=length(mods))
+  colnames(p_mat)<-mods
+  rownames(p_mat) <- colnames(datTraits)[1:5]
+  
+  for(i in mods){
+    lm <- lm(get(i)~CUD+Age+PMI+pH+RIN, data = ME_reg_dat)
+    beta_mat[,i] <- summary(lm)$coefficients[-1,1]
+    p_mat[,i] <-summary(lm)$coefficients[-1,4]
+  }
+  
+  p_mat[1,][p_mat[1,] <0.05 ] # modules significantly associated with CUD status in the regression analysis
+  #MEivory        MEgrey60 MEpaleturquoise      MEskyblue3  MEmidnightblue         MEbrown    MElightcyan1        MEpurple 
+  #0.011115386     0.002098758     0.027848830     0.004279865     0.015366851     0.024717044     0.036322610     0.020744202
+  
+  colnames(p_mat)<-paste0("p_",colnames(p_mat))
+  reg_res <- as.data.frame(matrix(0,nrow=5,ncol=108))
+  colnames(reg_res)<- c(rbind(colnames(beta_mat),colnames(p_mat)))
+  rownames(reg_res)<-rownames(beta_mat)
+  
+  
+  for(i in colnames(beta_mat)){
+    reg_res[,i]<- beta_mat[,colnames(beta_mat)==i]
+  }
+  
+  for(i in colnames(p_mat)){
+    reg_res[,i]<- p_mat[,colnames(p_mat)==i]
+  }
+  
+  write.table(reg_res,file = "4_DE_downstream/WGCNA/regression_modules_results.txt", sep = ";", quote = F, row.names = T,col.names = T)
+  
   
   sizeGrWindow(10,6)
   # Will display correlations and their p-values
@@ -167,7 +205,7 @@ dir0 <- "/path/to/RNA"
                  main = paste("Module-trait relationships"))
   dev.off()
   
-  # Subset for associated modules only 
+  # Subset for associated modules only that are i) significantly correlated with CUD and ii) are significantly associated with CUD in the regression analysis
   
   pdf("/path/to/RNA/DE_downstream/WGCNA/Heatmap_modules_Expr_filtered_subset.pdf", width = 9, height = 4)
   par(mar = c(6, 8.5, 5, 5));
@@ -254,6 +292,44 @@ moduleTraitCor = cor(MEs, datTraits, use = "p")
 moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
 write.table(MEs, file = "MEs_Prot_filtered.txt", sep = ";", quote = F, row.names = T)
 
+# Regression analysis for the modules showing significant correlation with CUD status
+ME_reg_dat <- merge(MEs,datTraits, by=0)
+ME_reg_dat$CUD <- as.factor(ME_reg_dat$CUD)
+mods <- colnames(MEs)
+beta_mat <- matrix(0, nrow=5,ncol=length(mods))
+colnames(beta_mat)<-mods
+rownames(beta_mat) <- colnames(datTraits)[1:5]
+p_mat <- matrix(0, nrow=5,ncol=length(mods))
+colnames(p_mat)<-mods
+rownames(p_mat) <- colnames(datTraits)[1:5]
+
+for(i in mods){
+  lm <- lm(get(i)~CUD+Age+pH+PMI+batch, data = ME_reg_dat)
+  beta_mat[,i] <- summary(lm)$coefficients[-1,1]
+  p_mat[,i] <-summary(lm)$coefficients[-1,4]
+}
+
+p_mat[1,][p_mat[1,] <0.05 ] # modules significantly associated with CUD in the regression analysis
+#MEgreenyellow      MEyellow       MEbrown   MElightcyan     MEdarkred 
+#0.030650682   0.015476448   0.009717392   0.034602037   0.046830022 
+
+colnames(p_mat)<-paste0("p_",colnames(p_mat))
+reg_res <- as.data.frame(matrix(0,nrow=5,ncol=46))
+colnames(reg_res)<- c(rbind(colnames(beta_mat),colnames(p_mat)))
+rownames(reg_res)<-rownames(beta_mat)
+
+
+for(i in colnames(beta_mat)){
+  reg_res[,i]<- beta_mat[,colnames(beta_mat)==i]
+}
+
+for(i in colnames(p_mat)){
+  reg_res[,i]<- p_mat[,colnames(p_mat)==i]
+}
+
+write.table(reg_res,file = "regression_modules_results.txt", sep = ";", quote = F, row.names = T,col.names = T)
+
+
 # Will display correlations and their p-values
 textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
                    signif(moduleTraitPvalue, 1), ")", sep = "");
@@ -277,17 +353,17 @@ labeledHeatmap(Matrix = moduleTraitCor[,c(1,6,2:5)],
                main = paste("Module-trait relationships"))
 dev.off()
 
-# Subset for associated modules only 
+# Subset for modules only that are i) significantly correlated with CUD and ii) are significantly associated with CUD in the regression analysis
 
 pdf("/path/to/protein/data_analysis_results_V1/WGCNA/Heatmap_modules_Prot_filtered_subset.pdf", width = 6.25, height = 3.5)
 par(mar = c(6, 8.5, 5, 5));
-labeledHeatmap(Matrix = moduleTraitCor[rownames(moduleTraitCor) %in% c("MEyellow","MEbrown","MEtan"),c(1,6,2:5)],
+labeledHeatmap(Matrix = moduleTraitCor[rownames(moduleTraitCor) %in% c("MEyellow","MEbrown"),c(1,6,2:5)],
                xLabels = names(datTraits)[c(1,6,2:5)],
-               yLabels = c("MEyellow","MEbrown","MEtan"),
-               ySymbols = c("MEyellow","MEbrown","MEtan"),
+               yLabels = c("MEyellow","MEbrown"),
+               ySymbols = c("MEyellow","MEbrown"),
                colorLabels = FALSE,
                colors = blueWhiteRed(50),
-               textMatrix = textMatrix[c(6,7,16),c(1,6,2:5)],
+               textMatrix = textMatrix[c(6,7),c(1,6,2:5)],
                setStdMargins = FALSE,
                cex.text = 0.8,
                zlim = c(-1,1),

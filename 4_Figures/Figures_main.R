@@ -1,7 +1,7 @@
 #### Code for generating the VS multi-omics main manuscript figures ####
 # The analysis code for specific R packages e.g. DESeq2, WGCNA, hdWGCNA and CellChat has been adapted based on the vignette documentation of the packages. Details can be found in the individual analysis scripts.
 # Author: Eric Zillich 
-# last modification: EZ 2024-09-13
+# last modification: EZ 2024-12-04
 
 #############################################################
 #### Figure 1 - DE and GO analyses miRNA, mRNA, proteins ####
@@ -13,7 +13,7 @@
 library(ggrepel)
 library(ggplot2)
 
-DE_results <- read.csv("/path/to/miRNA/DE_results/DE_results.txt", row.names=1)
+DE_results <- read.csv("/path/to/miRNA/DE_results.txt", row.names=1)
 DE_results$miR <- rownames(DE_results)
 DE_results$DE <- 
   with(DE_results,ifelse(pvalue < 0.05 & log2FoldChange > 0.07, "DE up p<0.05",
@@ -34,7 +34,7 @@ customPlot <- list(
 
 
 p1 <- ggplot(data = DE_results, aes(log2FoldChange, -log10(pvalue), colour = DE)) + xlim(-6,6)+ ylim(0,6.7)+
-  geom_point(size=0.2) + geom_hline(aes(yintercept = -log10(0.05)),size=0.2) + geom_hline(aes(yintercept = -log10(3.405995e-05)),size=0.2,linetype="dashed") + geom_vline(aes(xintercept=0),size=0.2)+
+  geom_point(size=0.2) + geom_hline(aes(yintercept = -log10(0.05)),size=0.2) + geom_hline(aes(yintercept = -log10(3.39213e-05)),size=0.2,linetype="dashed") +geom_hline(aes(yintercept = -log10(0.0001696065)),size=0.2,linetype="dotted") + geom_vline(aes(xintercept=0),size=0.2)+
   geom_text_repel(aes(label = c(DE_results$miR[DE_results$log2FoldChange>0][c(1:2)],DE_results$miR[DE_results$log2FoldChange<0][c(1:2)]),segment.size=0.2), 
                   data = rbind(DE_results[DE_results$log2FoldChange>0,][c(1:2),],DE_results[DE_results$log2FoldChange<0,][c(1:2),]), 
                   vjust = 0, nudge_y = 0.1, size = 3) +
@@ -43,62 +43,62 @@ p1 <- ggplot(data = DE_results, aes(log2FoldChange, -log10(pvalue), colour = DE)
 
 
 #### 1D ####
+DE_res <- read.csv("/path/to/RNA/DE_results.txt")
+DE_res$DE <-
+with(DE_res,ifelse(pvalue < 0.05  & log2FoldChange > 0.07 , "DE up p<0.05",
+ifelse(pvalue < 0.05 & log2FoldChange < -0.07 , "DE down p<0.05", "n.s.")))
 
-DE_res <- read.csv("/path/to/RNA/DE_results/DE_results.txt")
-DE_res$DE <- 
-  with(DE_res,ifelse(pvalue < 0.05 & log2FoldChange > 0.07 , "DE up p<0.05",
-                         ifelse(pvalue < 0.05 & log2FoldChange < -0.07 , "DE down p<0.05", "n.s.")))
-DE_res$DE <- 
-  factor(DE_res$DE, 
-         ordered = TRUE, 
-         levels = c("DE up p<0.05","DE down p<0.05","n.s."))
+DE_res$DE <-
+factor(DE_res$DE,
+ordered = TRUE,
+levels = c("DE up p<0.05","DE down p<0.05","n.s."))
 
 DE_res <- DE_res[order(DE_res$pvalue,decreasing = F),]
+
 library(ggplot2)
 
 customPlot <- list(
-  theme_minimal(base_size = 12), 
-  scale_fill_manual(values=c("#E43F3F","#268989","gray80")), 
-  scale_colour_manual(values=c("#E43F3F","#268989","gray80"))
+theme_minimal(base_size = 12),
+scale_fill_manual(values=c("#E43F3F","#268989","gray80")),
+scale_colour_manual(values=c("#E43F3F","#268989","gray80"))
 )
 
-
 p2 <- ggplot(data = DE_res, aes(log2FoldChange, -log10(pvalue), colour = DE)) + xlim(-3,3)+ ylim(0,6.7)+
-  geom_point(size=0.2) + geom_hline(aes(yintercept = -log10(0.05)),size=0.2) + geom_hline(aes(yintercept = -log10( 1.017346e-05)),size=0.2,linetype="dashed") + geom_vline(aes(xintercept=0),size=0.2)+
-  geom_text_repel(aes(label = c(DE_res$Gene[DE_res$log2FoldChange>0][c(1:5)],DE_res$Gene[DE_res$log2FoldChange<0][c(1:5)]),segment.size=0.2), 
-                  data = rbind(DE_res[DE_res$log2FoldChange>0,][c(1:5),],DE_res[DE_res$log2FoldChange<0,][c(1:5),]), 
-                  vjust = 0, nudge_y = 0.1, size = 3) +
-  xlab("log2FoldChange") +ylab("")+
-  customPlot+theme(legend.position = "none")+ggtitle("mRNA")+theme(plot.title = element_text(hjust = 0.5))
-
+geom_point(size=0.2) + geom_hline(aes(yintercept = -log10(0.05)),size=0.2) + geom_hline(aes(yintercept = -log10(9.383242e-05)),size=0.2,linetype="dashed")+geom_hline(aes(yintercept = -log10(0.0091)),size=0.2,linetype="dotted") + geom_vline(aes(xintercept=0),size=0.2)+
+geom_text_repel(aes(label = c(DE_res$Gene[DE_res$log2FoldChange>0][c(1:5)],DE_res$Gene[DE_res$log2FoldChange<0][c(1:5)]),segment.size=0.2),
+data = rbind(DE_res[DE_res$log2FoldChange>0,][c(1:5),],DE_res[DE_res$log2FoldChange<0,][c(1:5),]),
+vjust = 0, nudge_y = 0.1, size = 3) +
+xlab("log2FoldChange") +ylab("")+
+customPlot+theme(legend.position = "none")+ggtitle("RNA")+theme(plot.title = element_text(hjust = 0.5))
 
 #### 1E ####
-limma_results <- read.csv("/path/to/protein/data_analysis_results_V1/Limma_results_V1.csv")
+limma_results <- read.csv("/path/to/protein/Limma_results.csv")
 
-limma_results$DE <- 
-  with(limma_results, ifelse(pvalue.limma < 0.05 & logFC > 0.07, "DE up p<0.05",
-                             ifelse(pvalue.limma < 0.05 & logFC < -0.07, "DE down p<0.05", "n.s.")))
-limma_results$DE <- 
-  factor(limma_results$DE, 
-         ordered = TRUE, 
-         levels = c("DE up p<0.05","DE down p<0.05","n.s."))
+limma_results$DE <-
+with(limma_results,ifelse(pvalue.limma < 0.05 &  logFC > 0.07 , "DE up p<0.05",
+ifelse(pvalue.limma < 0.05 & logFC < -0.07 , "DE down p<0.05", "n.s.")))
+
+limma_results$DE <-
+factor(limma_results$DE,
+ordered = TRUE,
+levels = c("DE up p<0.05","DE down p<0.05","n.s."))
 
 limma_results <- limma_results[order(limma_results$pvalue.limma,decreasing = F),]
 
-customPlot2 <- list(
-  theme_minimal(base_size = 12), 
-  scale_fill_manual(values=c("#E43F3F","#268989","gray80")), 
-  scale_colour_manual(values=c("#E43F3F","#268989","gray80"))
+customPlot <- list(
+theme_minimal(base_size = 12),
+scale_fill_manual(values=c("#E43F3F","#268989","gray80")),
+scale_colour_manual(values=c("#E43F3F","#268989","gray80"))
 )
 
 p3 <- ggplot(data = limma_results, aes(logFC, -log10(pvalue.limma), colour = DE)) +
-  geom_vline(aes(xintercept = 0)) + xlim(-1,1)+ ylim(0,6.7)+
-  geom_point(size=0.2) + geom_hline(aes(yintercept = -log10(0.05)),size=0.2) + geom_hline(aes(yintercept = -log10(1.17096e-05)),size=0.2,linetype="dashed")+
-  geom_text_repel(aes(label = c(limma_results$Gene[limma_results$logFC>0][c(1:5)],limma_results$Gene[limma_results$logFC<0][c(1:5)]),segment.size=0.2), 
-                  data = rbind(limma_results[limma_results$logFC>0,][c(1:5),],limma_results[limma_results$logFC<0,][c(1:5),]), 
-                  vjust = 0, nudge_y = 0.1, size = 3)  +
-  xlab("log2FoldChange") +ylab("")+
-  customPlot+theme(legend.position = "none")+ggtitle("protein")+theme(plot.title = element_text(hjust = 0.5))
+geom_vline(aes(xintercept = 0)) + xlim(-1,1)+ ylim(0,6.7)+
+geom_point(size=0.2) + geom_hline(aes(yintercept = -log10(0.05)),size=0.2) + geom_hline(aes(yintercept = -log10(1.17096e-05)),size=0.2,linetype="dashed")+ geom_hline(aes(yintercept = -log10(0.0165)),size=0.2,linetype="dotted")+
+geom_text_repel(aes(label = c(limma_results$Gene[limma_results$logFC>0][c(1:5)],limma_results$Gene[limma_results$logFC<0][c(1:5)]),segment.size=0.2),
+data = rbind(limma_results[limma_results$logFC>0,][c(1:5),],limma_results[limma_results$logFC<0,][c(1:5),]),
+vjust = 0, nudge_y = 0.1, size = 3)  +
+xlab("log2FoldChange") +ylab("")+
+customPlot+theme(legend.position = "none")+ggtitle("protein")+theme(plot.title = element_text(hjust = 0.5))
 
 library(ggpubr)
 p4<-ggarrange(p1,p2,p3,nrow=1,ncol=3)
@@ -114,29 +114,25 @@ library(enrichplot)
 library(DOSE)
 library(org.Hs.eg.db)
 
-# With DE genes p<0.05
-prot <- limma_results$Gene[limma_results$pvalue.limma<0.05 & abs(limma_results$logFC)>0.07]
+# With DE genes q<0.25
+prot <- limma_results$Gene[limma_results$fdr.limma<0.25 & abs(limma_results$logFC)>0.07]
 EIDs <- bitr(prot,fromType = "SYMBOL",toType = "ENTREZID",OrgDb = org.Hs.eg.db)
 prot_KEGG <- EIDs[!duplicated(EIDs[c("ENTREZID")]),"ENTREZID"]
 
-RNA <- DE_res$Gene[DE_res$pvalue<0.05 & abs(DE_res$log2FoldChange)>0.07]
+RNA <- DE_res$Gene[DE_res$padj<0.25 & abs(DE_res$log2FoldChange)>0.07]
 EIDs <- bitr(RNA,fromType = "SYMBOL",toType = "ENTREZID",OrgDb = org.Hs.eg.db)
 RNA_KEGG <- EIDs[!duplicated(EIDs[c("ENTREZID")]),"ENTREZID"]
 
-miR_targets_significant <- read.table("/path/to/miRNA/DE_downstream/miR_targets_significant.txt", quote="\"", comment.char="")
-EIDs <- bitr(miR_targets_significant$V1,fromType = "SYMBOL",toType = "ENTREZID",OrgDb = org.Hs.eg.db)
-miR_target_KEGG <- EIDs[!duplicated(EIDs[c("ENTREZID")]),"ENTREZID"]
-
-cc_GO <- compareCluster(geneClusters =list(miRNA=miR_targets_significant$V1,RNA=RNA,Protein=prot),fun = "enrichGO",OrgDb = org.Hs.eg.db,keyType = "SYMBOL",pvalueCutoff=0.05,ont="ALL")
+cc_GO <- compareCluster(geneClusters =list(RNA=RNA,Protein=prot),fun = "enrichGO",OrgDb = org.Hs.eg.db,keyType = "SYMBOL",pvalueCutoff=0.05,ont="ALL")
 cc_GO <- pairwise_termsim(cc_GO)
 
-p4 <- emapplot(cc_GO,color="p.adjust",legend_n=2,cex_line=0.1,cex_label_category=0.8,layout="nicely",cex_category=0.7,showCategory=14)+scale_fill_manual(values=c("#bbbbbc","#0c70c8","#47a72f"))
+p4 <- emapplot(cc_GO,color="p.adjust",legend_n=2,cex_line=0.1,cex_label_category=0.8,layout="nicely",cex_category=0.7,showCategory=16)+scale_fill_manual(values=c("#0c70c8","#47a72f"))
 ggsave("/path/to/Figures/1F.pdf",p4,height=5,width=6)
 
-cc_KEGG <- compareCluster(geneClusters =list(miRNA=miR_target_KEGG,RNA=RNA_KEGG,Protein=prot_KEGG),fun = "enrichKEGG",keyType = "kegg",pvalueCutoff=0.05)
+cc_KEGG <- compareCluster(geneClusters =list(RNA=RNA_KEGG,Protein=prot_KEGG),fun = "enrichKEGG",keyType = "kegg",pvalueCutoff=0.05)
 cc_KEGG <- pairwise_termsim(cc_KEGG)
 
-p5 <- emapplot(cc_KEGG,color="p.adjust",legend_n=2,cex_line=0.1,cex_label_category=0.8,layout="nicely",cex_category=0.7,showCategory=18)+scale_fill_manual(values=c("#bbbbbc","#0c70c8","#47a72f"))
+p5 <- emapplot(cc_KEGG,color="p.adjust",legend_n=2,cex_line=0.1,cex_label_category=0.8,layout="nicely",cex_category=0.7,showCategory=24)+scale_fill_manual(values=c("#0c70c8","#47a72f"))
 ggsave("/path/to/Figures/1G.pdf",p5,height=5,width=6)
 
 ##########################
@@ -173,13 +169,13 @@ dev.off()
 # Protein CUD-associated modules 
 pdf("/path/to/Figures/2A_2.pdf", width = 6.25, height = 3.5)
 par(mar = c(6, 8.5, 5, 5));
-labeledHeatmap(Matrix = moduleTraitCor[rownames(moduleTraitCor) %in% c("MEyellow","MEbrown","MEtan"),c(1,6,2:5)],
+labeledHeatmap(Matrix = moduleTraitCor[rownames(moduleTraitCor) %in% c("MEyellow","MEbrown"),c(1,6,2:5)],
                xLabels = names(datTraits)[c(1,6,2:5)],
-               yLabels = c("MEyellow","MEbrown","MEtan"),
-               ySymbols = c("MEyellow","MEbrown","MEtan"),
+               yLabels = c("MEyellow","MEbrown"),
+               ySymbols = c("MEyellow","MEbrown"),
                colorLabels = FALSE,
                colors = blueWhiteRed(50),
-               textMatrix = textMatrix[c(6,7,16),c(1,6,2:5)],
+               textMatrix = textMatrix[c(6,7),c(1,6,2:5)],
                setStdMargins = FALSE,
                cex.text = 0.8,
                zlim = c(-1,1),
@@ -197,17 +193,17 @@ geneInfo0_Expr <- read.csv("/path/to/RNA/DE_downstream/WGCNA/geneInfo0_Expr.txt"
 # Protein module genes
 geneInfo0 <- read.csv("/path/to/protein/data_analysis_results_V1/WGCNA/geneInfo_Prot0.txt", sep=";")
 
-GO_gene_list2 <- list(yellow=geneInfo0$geneSymbol[geneInfo0$moduleColor == "yellow"],brown=geneInfo0$geneSymbol[geneInfo0$moduleColor == "brown"],tan=geneInfo0$geneSymbol[geneInfo0$moduleColor == "tan"],grey60=geneInfo0_Expr$geneSymbol[geneInfo0_Expr$moduleColor == "grey60"],skyblue3=geneInfo0_Expr$geneSymbol[geneInfo0_Expr$moduleColor == "skyblue3"],midnightblue=geneInfo0_Expr$geneSymbol[geneInfo0_Expr$moduleColor == "midnightblue"],lightcyan1=geneInfo0_Expr$geneSymbol[geneInfo0_Expr$moduleColor == "lightcyan1"])
+GO_gene_list2 <- list(yellow=geneInfo0$geneSymbol[geneInfo0$moduleColor == "yellow"],brown=geneInfo0$geneSymbol[geneInfo0$moduleColor == "brown"],grey60=geneInfo0_Expr$geneSymbol[geneInfo0_Expr$moduleColor == "grey60"],skyblue3=geneInfo0_Expr$geneSymbol[geneInfo0_Expr$moduleColor == "skyblue3"],midnightblue=geneInfo0_Expr$geneSymbol[geneInfo0_Expr$moduleColor == "midnightblue"],lightcyan1=geneInfo0_Expr$geneSymbol[geneInfo0_Expr$moduleColor == "lightcyan1"])
 
 module_GO2 <- compareCluster(geneClusters = GO_gene_list2,fun = "enrichGO",OrgDb = org.Hs.eg.db,keyType = "SYMBOL",pvalueCutoff=0.05,ont="ALL")
 module_GO2 <-pairwise_termsim(module_GO2)
 
 png("/path/to/Figures/2C.png",units="in",res=900,width=16,height=10,family="Arial")
-treeplot(module_GO2,nCluster=9,geneClusterPanel="dotplot",offset=rel(2.5),nwords=10,  offset.params = list(bar_tree = rel(1), tiplab = rel(1.1), extend = 0, hexpand = 0.1),group_color=magma(15)[c(2:10)],hclust_method="ward.D",showCategory=6)
+treeplot(module_GO2,nCluster=9,geneClusterPanel="heatMap",offset=rel(3.2),nwords=5,  offset.params = list(bar_tree = rel(1), tiplab = rel(1.5), extend = 0.2, hexpand = 0.2),group_color=magma(15)[c(2:10)],hclust_method="ward.D",showCategory=5)
 dev.off()
 
 #### 2D+E ####
-# GeneOverlap for WGCNA module genes, DE genes and marker genes, also miRNA target genes 
+# GeneOverlap for WGCNA module genes, DE genes and marker genes
 # Import module genes 
 geneInfo0_Expr <- read.csv("/path/to/RNA/DE_downstream/WGCNA/geneInfo0_Expr.txt", sep=";")
 gy_RNA <- unique(geneInfo0_Expr$genx[geneInfo0_Expr$moduleColor=="grey60"])
@@ -218,28 +214,28 @@ cy_RNA <- unique(geneInfo0_Expr$genx[geneInfo0_Expr$moduleColor=="lightcyan1"])
 geneInfo_Prot0 <- read.csv("/path/to/protein/data_analysis_results_V1/WGCNA/geneInfo_Prot0.txt", sep=";")
 yl_Prot <- unique(geneInfo_Prot0$genx[geneInfo_Prot0$moduleColor=="yellow"])
 br_Prot <- unique(geneInfo_Prot0$genx[geneInfo_Prot0$moduleColor=="brown"])
-tan_Prot <- unique(geneInfo_Prot0$genx[geneInfo_Prot0$moduleColor=="tan"])
 
 # Import DE genes and proteins
 DE_RNA <- read.csv("/path/to/RNA/DE_results/DE_results.txt")
-RNA_up <- unique(DE_RNA$Gene[DE_RNA$pvalue<0.05 & DE_RNA$log2FoldChange>0.07])
-RNA_down <- unique(DE_RNA$Gene[DE_RNA$pvalue<0.05 & DE_RNA$log2FoldChange<0.07])
+RNA_up <- unique(DE_RNA$Gene[DE_RNA$padj<0.25 & DE_RNA$log2FoldChange>0.07])
+RNA_down <- unique(DE_RNA$Gene[DE_RNA$padj<0.25 & DE_RNA$log2FoldChange<0.07])
 
 DE_Prot <- read.csv("/path/to/protein/data_analysis_results_V1/Limma_results_V1.csv")
-Prot_up <- unique(DE_Prot$Gene[DE_Prot$pvalue.limma<0.05 & DE_Prot$logFC>0.07])
-Prot_down <- unique(DE_Prot$Gene[DE_Prot$pvalue.limma<0.05 & DE_Prot$logFC<0.07])
+Prot_up <- unique(DE_Prot$Gene[DE_Prot$fdr.limma<0.25 & DE_Prot$logFC>0.07])
+Prot_down <- unique(DE_Prot$Gene[DE_Prot$fdr.limma<0.25 & DE_Prot$logFC<0.07])
 
 # Create GeneOverlap matrix
-query <- list(grey60_RNA = gy_RNA,skyblue3_RNA=sb_RNA,midnightblue_RNA = mnb_RNA,lightcyan1_RNA=cy_RNA,yellow_protein=yl_Prot,brown_protein=br_Prot,tan_protein=tan_Prot)
+query <- list(grey60_RNA = gy_RNA,skyblue3_RNA=sb_RNA,midnightblue_RNA = mnb_RNA,lightcyan1_RNA=cy_RNA,yellow_protein=yl_Prot,brown_protein=br_Prot)
 ref <- list(DE_up_RNA = RNA_up,DE_down_RNA=RNA_down,DE_up_protein=as.character(Prot_up),DE_down_protein=as.character(Prot_down))
 
 library(GeneOverlap)  
 gom.obj <- newGOM(ref,query,genome.size=19659)
 
 # Plot GeneOverlap Figure
-pdf("/path/to/Figures/2D_E.pdf",height=8,width=11)
+pdf("/path/to/Figures/2D_E.pdf",height=8,width=10)
 drawHeatmap(gom.obj,what= "Jaccard", grid.col="Reds",note.col="black",adj.p = T,cutoff = 0.05)
 dev.off()
+
 
 #########################
 #### Figure 3 - MOFA #### 
@@ -383,39 +379,39 @@ dp <- DotPlot(object = seurat, features = genes,assay ="RNA", dot.scale = 4.5) +
 ggsave("/path/to/Figures/4B.pdf",plot = dp,width = 7,height=5)
 
 #### 4C ####
-# Import DE results - log2FC 0.5 cutoff and padj 0.05, only celltypes with more than 100 cells from each condition
+# Import DE results - log2FC 0.5 cutoff and padj 0.001, only celltypes with more than 100 cells from each condition
 OPC <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOPC.csv")
-OPC_sig <- OPC[OPC$p_val_adj<0.05 & abs(OPC$avg_log2FC)>0.25 ,]
+OPC_sig <- OPC[OPC$p_val_adj<0.001 & abs(OPC$avg_log2FC)>0.5 ,]
 OPC_sig <- OPC_sig[OPC_sig$pct.1 > 0.25 | OPC_sig$pct.2 > 0.25, ]
 OPC_top10 <- OPC_sig$X[order(abs(OPC_sig$avg_log2FC),decreasing = T)][c(1:10)]
 
 Oligodendrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOligodendrocyte.csv")
-Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.05 & abs(Oligodendrocyte$avg_log2FC)>0.25,]
+Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.001 & abs(Oligodendrocyte$avg_log2FC)>0.5,]
 Oligodendrocyte_sig <- Oligodendrocyte_sig[Oligodendrocyte_sig$pct.1 > 0.25 | Oligodendrocyte_sig$pct.2 > 0.25, ]
 Oligodendrocyte_top10 <- Oligodendrocyte_sig$X[order(abs(Oligodendrocyte_sig$avg_log2FC),decreasing = T)][c(1:10)]
 
 Astrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterAstrocyte.csv")
-Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.05 & abs(Astrocyte$avg_log2FC)>0.25,]
+Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.001 & abs(Astrocyte$avg_log2FC)>0.5,]
 Astrocyte_sig <- Astrocyte_sig[Astrocyte_sig$pct.1 > 0.25 | Astrocyte_sig$pct.2 > 0.25, ]
 Astrocyte_top10 <- Astrocyte_sig$X[order(abs(Astrocyte_sig$avg_log2FC),decreasing = T)][c(1:10)]
 
 Microglia <- read.csv("/path/to/snRNAseq/3_results/DE/clusterMicroglia.csv")
-Microglia_sig <- Microglia[Microglia$p_val_adj<0.05 & abs(Microglia$avg_log2FC)>0.25,]
+Microglia_sig <- Microglia[Microglia$p_val_adj<0.001 & abs(Microglia$avg_log2FC)>0.5,]
 Microglia_sig <- Microglia_sig[Microglia_sig$pct.1 > 0.25 | Microglia_sig$pct.2 > 0.25, ]
 Microglia_top10 <- Microglia_sig$X[order(abs(Microglia_sig$avg_log2FC),decreasing = T)][c(1:10)]
 
 GABAergic_1 <- read.csv("/path/to/snRNAseq/3_results/DE/clusterGABAergic-1.csv")
-GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.05 & abs(GABAergic_1$avg_log2FC)>0.25,]
+GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.001 & abs(GABAergic_1$avg_log2FC)>0.5,]
 GABAergic_1_sig <- GABAergic_1_sig[GABAergic_1_sig$pct.1 > 0.25 | GABAergic_1_sig$pct.2 > 0.25, ]
 GABAergic_1_top10 <- GABAergic_1_sig$X[order(abs(GABAergic_1_sig$avg_log2FC),decreasing = T)][c(1:10)]
 
 D2MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD2-MSN.csv")
-D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.05 & abs(D2MSN$avg_log2FC)>0.25,]
+D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.001 & abs(D2MSN$avg_log2FC)>0.5,]
 D2MSN_sig <- D2MSN_sig[D2MSN_sig$pct.1 > 0.25 | D2MSN_sig$pct.2 > 0.25, ]
 D2MSN_top10 <- D2MSN_sig$X[order(abs(D2MSN_sig$avg_log2FC),decreasing = T)][c(1:10)]
 
 D1MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD1-MSN.csv")
-D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.05 & abs(D1MSN$avg_log2FC)>0.25,]
+D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.001 & abs(D1MSN$avg_log2FC)>0.5,]
 D1MSN_sig <- D1MSN_sig[D1MSN_sig$pct.1 > 0.25 | D1MSN_sig$pct.2 > 0.25, ]
 D1MSN_top10 <- D1MSN_sig$X[order(abs(D1MSN_sig$avg_log2FC),decreasing = T)][c(1:10)]
 
@@ -526,12 +522,12 @@ dfs_l2FC <- dfs_l2FC[,-1]
 dfs_p <- dfs_p[,-1]
 
 # structural component of ribosome genes
-ribo <- gsub("/",";",both_GO@compareClusterResult[1,"geneID"])
-ribo <- unlist(strsplit(ribo, ";"))
+ribo <- gsub("/",";",both_GO@compareClusterResult$geneID[both_GO@compareClusterResult$Description=="structural constituent of ribosome"])
+ribo <- unique(unlist(strsplit(ribo, ";")))
 
 # electron transfer activity genes
-nadh <- gsub("/",";",both_GO@compareClusterResult[3,"geneID"])
-nadh <- unlist(strsplit(nadh, ";"))
+nadh <- gsub("/",";",both_GO@compareClusterResult$geneID[both_GO@compareClusterResult$Description=="electron transfer activity"])
+nadh <- unique(unlist(strsplit(nadh, ";")))
 
 # Create log2FC hms
 hm_ribo_genes <- dfs_l2FC[rownames(dfs_l2FC) %in% ribo,]
@@ -543,8 +539,8 @@ hm_nadh_genes <- as.matrix(hm_nadh_genes[match(nadh,rownames(hm_nadh_genes)),])
 
 ## Create pval hms
 makeStars <- function(x){
-  stars <- c( "***", "**", "*","")
-  vec <- c(0, 0.001, 0.01, 0.05,1.01)
+  stars <- c("*","")
+  vec <- c(0,0.001,1.01)
   i <- findInterval(x, vec)
   stars[i]
 }
@@ -559,16 +555,25 @@ hm_nadh_genes_p <- as.matrix(hm_nadh_genes_p[match(nadh,rownames(hm_nadh_genes_p
 hm_nadh_genes_star <-  t(apply(hm_nadh_genes_p,1,makeStars))
 colnames(hm_nadh_genes_star) <-  colnames(hm_nadh_genes_p)
 
+# Plot the heatmaps
 library(RColorBrewer)
 library(pheatmap)
 
-pdf("/path/to/Figures/4E_1.pdf",width=6,height=12)
-pheatmap(hm_ribo_genes, breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_ribo_genes_star,number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ribosomal genes")
+pdf("/path/to/snRNAseq/3_results/Hm_ribosomal_genes1.pdf",width=6,height=14)
+pheatmap(hm_ribo_genes[c(1:32),], breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_ribo_genes_star[c(1:32),],number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ribosomal genes")
 dev.off()
 
-# ETC includes genes from NADH dehydrogenase and cytochrome c oxidase 
-pdf("/path/to/Figures/4E_2.pdf",width=6,height=12)
-pheatmap(hm_nadh_genes, breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_nadh_genes_star,number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ETC genes")
+pdf("/path/to/snRNAseq/3_results/Hm_ribosomal_genes2.pdf",width=6,height=14)
+pheatmap(hm_ribo_genes[c(33:64),], breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_ribo_genes_star[c(33:64),],number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ribosomal genes")
+dev.off()
+
+# ETC includes genes from NADH dehydrogenase and cytochrom c oxidase 
+pdf("/path/to/snRNAseq/3_results/Hm_etc_genes1.pdf",width=6,height=12)
+pheatmap(hm_nadh_genes[c(1:10),], breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_nadh_genes_star[c(1:10),],number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ETC genes")
+dev.off()
+
+pdf("/path/to/snRNAseq/3_results/Hm_etc_genes2.pdf",width=6,height=12)
+pheatmap(hm_nadh_genes[c(11:19),], breaks=seq(-1.5, 1.5, length.out=10),color = colorRampPalette(c("blue","white","red"))(10),cluster_rows = F,cluster_cols = F,fontsize = 12,display_numbers = hm_nadh_genes_star[c(11:19),],number_color="black",angle_col = 45,cellwidth = 20,cellheight = 20,main = "ETC genes")
 dev.off()
 
 ######################################

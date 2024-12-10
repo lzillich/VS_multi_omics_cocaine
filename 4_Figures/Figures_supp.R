@@ -1,7 +1,7 @@
 #### Code for generating the VS multi-omics supplementary figures ####
 # The analysis code for specific R packages e.g. DESeq2, WGCNA, hdWGCNA and CellChat has been adapted based on the vignette documentation of the packages. Details can be found in the individual analysis scripts.
 # Author: Eric Zillich 
-# last modification: EZ 2024-09-16
+# last modification: EZ 2024-12-04
 
 ###########################################################################
 #### Supplementary Figure 1 - PCA of bulk-level datasets and CIBERSORT #### 
@@ -13,6 +13,7 @@
 
 # Import CIBERSORT estimates
 results<- read.csv("/path/to/RNA/DE_downstream/CIBERSORT/Markers_CIBERSORT_snRNA_VS.txt", sep=";")
+rownames(results)<-results$Sample
 
 # prepare results for plotting
 pheno <- read.csv("/path/to/RNA/DE_results/pheno.txt", sep=";")
@@ -26,14 +27,14 @@ rownames(pheno) <-pheno$rn
 res2 <- merge(pheno,results,by=0)
 rownames(res2) <- res2$CUD
 
-res3 <- res2[,c(5:10)]
+res3 <- res2[,c(6:11)]
 
 perc_df <- data.frame(samples=rep(rownames(res3),each=6),celltypes=rep(colnames(res3),times=40),value=as.vector(t(res3)))
 perc_df$samples <- factor(perc_df$samples, levels=pheno$CUD)
 
 # Plot the fraction of celltypes as stacked barplot
 per <- ggplot(perc_df, aes(fill=celltypes, y=value, x=samples)) + 
-  geom_bar(position="fill", stat="identity")+theme(element_text(size=10))+scale_fill_manual(values=c("#F7AB64","#74BA59","#70305A","#E8326D", "#3A9BCC","#85CEE4"))+ylab("celltype proportion")+xlab(NULL)+
+  geom_bar(position="fill", stat="identity")+theme(element_text(size=10))+scale_fill_manual(values=c("#F7AB64","#006960","#3A9BCC","#74BA59", "#70305A","#E8326D"))+ylab("celltype proportion")+xlab(NULL)+
   theme_minimal()+theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
 ggsave(plot = per,filename = "/path/to/Figures/S1C.pdf", width = 10, height=4)
 
@@ -147,15 +148,15 @@ Prot_mean_dat_CUD <- rowMeans(dat_CUD2)
 dat_Ctrl2 <- datProt_int[,colnames(datProt_int) == 0]
 Prot_mean_dat_Ctrl <- rowMeans(dat_Ctrl2)
 
-dat_CUD <- data.frame(RNA=unname(RNA_mean_dat_CUD),Protein=unname(Prot_mean_dat_CUD),row.names = names(RNA_mean_dat_CUD))
-dat_Ctrl <- data.frame(RNA=unname(RNA_mean_dat_Ctrl),Protein=unname(Prot_mean_dat_Ctrl),row.names = names(RNA_mean_dat_Ctrl))
+dat_CUD_comb <- data.frame(RNA=unname(RNA_mean_dat_CUD),Protein=unname(Prot_mean_dat_CUD),row.names = names(RNA_mean_dat_CUD))
+dat_Ctrl_comb <- data.frame(RNA=unname(RNA_mean_dat_Ctrl),Protein=unname(Prot_mean_dat_Ctrl),row.names = names(RNA_mean_dat_Ctrl))
 
-dat_CUD$status <- "CUD"
-rownames(dat_CUD) <- paste0("CUD_",rownames(dat_CUD))
-dat_Ctrl$status <- "Ctrl"
-rownames(dat_Ctrl) <- paste0("Ctrl_",rownames(dat_Ctrl))
+dat_CUD_comb$status <- "CUD"
+rownames(dat_CUD_comb) <- paste0("CUD_",rownames(dat_CUD_comb))
+dat_Ctrl_comb$status <- "Ctrl"
+rownames(dat_Ctrl_comb) <- paste0("Ctrl_",rownames(dat_Ctrl_comb))
 
-dat_combined <- rbind(dat_CUD,dat_Ctrl)
+dat_combined <- rbind(dat_CUD_comb,dat_Ctrl_comb)
 
 # Plot correlation separated by CUD/Ctrl status
 p4 <- ggscatter(dat_combined , x = "RNA", y = "Protein", 
@@ -234,6 +235,18 @@ gsea_plot <- ggbarplot(gse, x = "Description", y = "NES",
                        lab.size=2)+ylim(-5,5)+NoLegend()+xlab(NULL)+scale_fill_manual(values=c("#268989","#E43F3F"))+ylab("GSEA set statistic")+ geom_text(aes(y=0.8*abs(NES)/NES,label = lab), vjust = 0.5,hjust=0,size=6)+coord_flip()+theme_minimal() + theme(text=element_text(size=20))
 
 ggsave("/path/to/Figures/S2F.pdf",gsea_plot,width=12,height=8)
+
+# Check for difference of correlation coefficients between CUD and Ctrl to calculate a delta R value indicating synchronized/desynchronized correlation patterns in CUD/Ctrl
+# Correlation coefficients for each gene where RNA and protein data is available - split by CUD and Ctrl 
+diag_CUD <- diag(cor(t(dat_CUD), t(dat_CUD2), method = "pearson"))
+diag_Ctrl <- diag(cor(t(dat_Ctrl), t(dat_Ctrl2), method = "pearson"))
+
+# Create results dataframe
+dat_diff <- data.frame(CUD=unname(diag_CUD),Ctrl=unname(diag_Ctrl))
+rownames(dat_diff)<- names(diag_CUD)
+dat_diff$diff <- diag_CUD-diag_Ctrl # diff represents the delta R value
+dat_diff <- dat_diff[order(dat_diff$diff,decreasing = T),]
+write.table(dat_diff,"/path/to/results/dat_diff.txt",row.names = T, col.names = T, quote=F, sep=";")
 
 ###############################################################################
 #### Supplementary Figure 3 - WGCNA full module-trait correlation heatmaps ####
@@ -423,49 +436,82 @@ seurat$PMI <- factor(seurat$PMI,levels=names(table(sort(as.numeric(seurat$PMI)))
 p_pmi <- DimPlot(seurat,label=F,reduction = "umap.harmony",order=rev(levels(seurat$PMI)))+xlab("UMAP1")+ylab("UMAP2")+scale_color_manual(values=viridis(16))
 ggsave("/path/to/Figures/S5F.pdf",plot = p_pmi,width = 6,height=5)
 
+##############################################################################################################
+#### Supplementary Figure 6 - Annotation of GABAergic clusters 1-3 and nuclei per condition per cell type ####
+##############################################################################################################
+
+#### S6A ####
+
+Idents(seurat)<-"celltypes"
+
+seurat_gaba <- subset(seurat, idents=c("GABAergic-1","GABAergic-2","GABAergic-3"))
+
+# Expression marker gene heatmap
+genes_gaba <- c("GAD1","GAD2","DRD1","ADARB2","CXCL14","CDH10","PTHLH","THSD4","NPY","SST","VIP","CCK","TAC3","PTPRK","TMEM163","GFRA2","CHAT","DRD2","HTR7","GRIK3","PTPRT")
+Idents(seurat_gaba) <- "celltypes"
+seurat_gaba@active.ident <- factor(seurat_gaba@active.ident,
+                                   levels= rev(c("GABAergic-1",
+                                                 "GABAergic-2",
+                                                 "GABAergic-3")))
+
+dp <- DotPlot(object = seurat_gaba, features = genes_gaba,assay ="RNA", dot.scale = 4.5) + 
+  theme(axis.text.x = element_text(angle = 90)) + 
+  theme(axis.text.y = element_text(size=10)) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1,size=10)) + 
+  theme(text=element_text(size = 8))+
+  theme(aspect.ratio =0.8) + xlab("")+ylab("")
+ggsave("/path/to/Figures/S6A.pdf",plot = dp,width = 7,height=5)
+
+#### S6B ####
+seurat$CUD <- factor(seurat$CUD,levels=c("CUD","Ctrl"))
+library(gridExtra)
+pdf("/path/to/Figures/S6B.pdf",width = 14,height=2)
+grid.table(table(seurat$CUD,seurat$celltypes))
+dev.off()
+
 ################################################################
-#### Supplementary Figure 6 - snRNA-seq DE comparison plots ####
+#### Supplementary Figure 7 - snRNA-seq DE comparison plots ####
 ################################################################
 
-# Import DE results - log2FC 0.5 cutoff and padj 0.05, only celltypes with more than 100 cells from each condition
+# Import DE results - log2FC 0.5 cutoff and padj 0.001, only celltypes with more than 100 cells from each condition
 OPC <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOPC.csv")
-OPC_sig <- OPC[OPC$p_val_adj<0.05 & abs(OPC$avg_log2FC)>0.25 ,]
+OPC_sig <- OPC[OPC$p_val_adj<0.001 & abs(OPC$avg_log2FC)>0.5 ,]
 OPC_sig <- OPC_sig[OPC_sig$pct.1 > 0.25 | OPC_sig$pct.2 > 0.25, ]
 
 Oligodendrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOligodendrocyte.csv")
-Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.05 & abs(Oligodendrocyte$avg_log2FC)>0.25,]
+Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.001 & abs(Oligodendrocyte$avg_log2FC)>0.5,]
 Oligodendrocyte_sig <- Oligodendrocyte_sig[Oligodendrocyte_sig$pct.1 > 0.25 | Oligodendrocyte_sig$pct.2 > 0.25, ]
 
 Astrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterAstrocyte.csv")
-Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.05 & abs(Astrocyte$avg_log2FC)>0.25,]
+Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.001 & abs(Astrocyte$avg_log2FC)>0.5,]
 Astrocyte_sig <- Astrocyte_sig[Astrocyte_sig$pct.1 > 0.25 | Astrocyte_sig$pct.2 > 0.25, ]
 
 Microglia <- read.csv("/path/to/snRNAseq/3_results/DE/clusterMicroglia.csv")
-Microglia_sig <- Microglia[Microglia$p_val_adj<0.05 & abs(Microglia$avg_log2FC)>0.25,]
+Microglia_sig <- Microglia[Microglia$p_val_adj<0.001 & abs(Microglia$avg_log2FC)>0.5,]
 Microglia_sig <- Microglia_sig[Microglia_sig$pct.1 > 0.25 | Microglia_sig$pct.2 > 0.25, ]
 
 GABAergic_1 <- read.csv("/path/to/snRNAseq/3_results/DE/clusterGABAergic-1.csv")
-GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.05 & abs(GABAergic_1$avg_log2FC)>0.25,]
+GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.001 & abs(GABAergic_1$avg_log2FC)>0.5,]
 GABAergic_1_sig <- GABAergic_1_sig[GABAergic_1_sig$pct.1 > 0.25 | GABAergic_1_sig$pct.2 > 0.25, ]
 
 D2MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD2-MSN.csv")
-D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.05 & abs(D2MSN$avg_log2FC)>0.25,]
+D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.001 & abs(D2MSN$avg_log2FC)>0.5,]
 D2MSN_sig <- D2MSN_sig[D2MSN_sig$pct.1 > 0.25 | D2MSN_sig$pct.2 > 0.25, ]
 
 D1MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD1-MSN.csv")
-D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.05 & abs(D1MSN$avg_log2FC)>0.25,]
+D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.001 & abs(D1MSN$avg_log2FC)>0.5,]
 D1MSN_sig <- D1MSN_sig[D1MSN_sig$pct.1 > 0.25 | D1MSN_sig$pct.2 > 0.25, ]
 
-#### S6A ####
+#### S7A ####
 #Upset plot for DE genes 
 library(UpSetR)
 cell_list <- list(Astrocyte = Astrocyte_sig$X,OPC = OPC_sig$X,Oligodendrocyte=Oligodendrocyte_sig$X,Microglia=Microglia_sig$X,D1MSN=D1MSN_sig$X,D2MSN=D2MSN_sig$X,GABAergic_1=GABAergic_1_sig$X)
 
-pdf("/path/to/Figures/S6A.pdf",width=9,height=6.5)
+pdf("/path/to/Figures/S7A.pdf",width=9,height=6.5)
 upset(fromList(cell_list),nsets = 9,nintersects = 30,sets.x.label = "DE genes",mainbar.y.label = "DE gene overlap",order.by = "freq",text.scale = c(2,2,2,2,2,1.5))
 dev.off()
 
-#### S6B ####
+#### S7B ####
 # Run RRHO comparing snRNA-seq (cluster-ignorant) with bulk-level DE results
 library(RRHO2)
 markers <- FindMarkers(seurat,ident.1 = "CUD", ident.2 = "Ctrl", min.pct = 0.1,logfc.threshold = 0,assay = "RNA",features=genes) # perform DE analysis in snRNA-seq across all clusters (CUD vs. Ctrl comparison)
@@ -489,38 +535,38 @@ DE_snRNA_VS <- markers[markers$Gene %in%
 RRHO_obj <-  RRHO2_initialize(DE_VS,DE_snRNA_VS , labels = c("bulk RNA-seq VS", "snRNA-seq VS"), log10.ind=TRUE,method = "hyper")
 
 # Plot RRHO heatmap
-pdf("/path/to/Figures/S6B.pdf",width=6,height=6)
+pdf("/path/to/Figures/S7B.pdf",width=6,height=6)
 RRHO2_heatmap(RRHO_obj)
 dev.off()
 
 #########################################################################
-#### Supplementary Figure 7 - hdWGCNA in the human snRNA-seq dataset ####
+#### Supplementary Figure 8 - hdWGCNA in the human snRNA-seq dataset ####
 #########################################################################
 
 # Import hdWGCNA object 
 seurat_obj <- readRDS("/path/to/snRNAseq/2_data_processed/3_hdWGCNA_object.rds")
 
-#### S7A ####
+#### S8A ####
 # ModuleFeaturePlot for Astrocyte, Inh_MSN, and Inh_GABA 
 p_Astrocyte <- ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1, raster_scale=0.25, wgcna_name='Astrocyte', restrict_range=FALSE,reduction = "umap.harmony")
 
-pdf(paste0(data_dir, "S7A_1.pdf"),height=20, width=20)
+pdf(paste0(data_dir, "S8A_1.pdf"),height=20, width=20)
 wrap_plots(p_Astrocyte, ncol=5)
 dev.off()
 
 p_Inh_GABA <- ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1,raster_scale=0.25, wgcna_name='Inh_GABA', restrict_range=FALSE,reduction = "umap.harmony")
 
-pdf(paste0(data_dir, "S7A_2.pdf"),height=20, width=20)
+pdf(paste0(data_dir, "S8A_2.pdf"),height=20, width=20)
 wrap_plots(p_Inh_GABA, ncol=5)
 dev.off()
 
 p_Inh_MSN <- ModuleFeaturePlot(seurat_obj, order='shuffle', raster=TRUE, raster_dpi=100, alpha=1,raster_scale=0.25, wgcna_name='Inh_MSN', restrict_range=FALSE,reduction = "umap.harmony")
 
-pdf(paste0(data_dir, "S7A_3.pdf"),height=20, width=20)
+pdf(paste0(data_dir, "S8A_3.pdf"),height=20, width=20)
 wrap_plots(p_Inh_MSN, ncol=5)
 dev.off()
 
-#### S7B ####
+#### S8B ####
 # CUD DME analysis lollipop plot
 dmel <- PlotDMEsLollipop2(
   seurat_obj, 
@@ -528,26 +574,26 @@ dmel <- PlotDMEsLollipop2(
   wgcna_name="Astrocyte", 
   pvalue = "p_val_adj")+xlim(-1,2.5)
 
-ggsave("/path/to/Figures/S7B.pdf",dmel, width=8, height=5)
+ggsave("/path/to/Figures/S8B.pdf",dmel, width=8, height=5)
 
-#### S7C ####
+#### S8C ####
 dmel2 <- PlotDMEsLollipop2(
   seurat_obj, 
   CUD_DMEs[CUD_DMEs$group=="Inh_MSN",], 
   wgcna_name="Inh_MSN", 
   pvalue = "p_val_adj")+xlim(-1,2.8)
-ggsave("/path/to/Figures/S7C.pdf",dmel2, width=8, height=5)
+ggsave("/path/to/Figures/S8C.pdf",dmel2, width=8, height=5)
 
-#### S7D ####
+#### S8D ####
 dmel3 <- PlotDMEsLollipop2(
   seurat_obj, 
   CUD_DMEs[CUD_DMEs$group=="Inh_GABA",], 
   wgcna_name="Inh_GABA", 
   pvalue = "p_val_adj")+xlim(-1,1)
-ggsave("/path/to/Figures/S7D.pdf",dmel3, width=8, height=5)
+ggsave("/path/to/Figures/S8D.pdf",dmel3, width=8, height=5)
 
-#### S7E ####
-# DE genes were loaded for Figure S6, now plot hdWGCNA module gene overlap with cluster-specific DE genes 
+#### S8E ####
+# DE genes were loaded from Figure S7 (|log2FC|>0.5 and p.adj<0.001) and grouped based on positive (up) or negative (down) log2FC, now plot hdWGCNA module gene overlap with cluster-specific DE genes 
 
 # Create DE gene list
 l_DE <- list(Astrocyte_up_DE=Astrocyte_sig_up,Astrocyte_down_DE=Astrocyte_sig_down,D1MSN_up_DE=D1MSN_sig_up,D1MSN_down_DE=D1MSN_sig_down,D2MSN_up_DE=D2MSN_sig_up,D2MSN_down_DE=D2MSN_sig_down,Inh_GABA_up_DE=GABAergic_1_sig_up,Inh_GABA_down_DE=GABAergic_1_sig_down)
@@ -577,11 +623,11 @@ l_hdWGCNA <- list(Astocyte_M12=g_ast_12,Astrocyte_M14=g_ast_14,Astrocyte_M18=g_a
 library(GeneOverlap)
 gom.obj <- newGOM(l_DE, l_hdWGCNA,36588)
 
-pdf("/path/to/Figures/S7E.pdf",height=8, width=12)
+pdf("/path/to/Figures/S8E.pdf",height=8, width=12)
 drawHeatmap(gom.obj,grid.col="Reds", note.col="black",adj.p = T,what=c("Jaccard"))
 dev.off()
 
-#### S7F ####
+#### S8F ####
 # Hub gene network plot for Astrocyte, Inh_MSN, and Inh_GABA modules
 
 groups <- c("Astrocyte","Inh_MSN","Inh_GABA")
@@ -596,7 +642,7 @@ for(cur_group in groups){
 }
 
 ####################################################################################################
-#### Supplementary Figure 8 - hdWGCNA GO/KEGG enrichment analysis results for the human dataset ####
+#### Supplementary Figure 9 - hdWGCNA GO/KEGG enrichment analysis results for the human dataset ####
 ####################################################################################################
 
 # Run GO/KEGG enrichment analyses
@@ -685,7 +731,7 @@ m7$db[c(11:20)]<-"KEGG"
 
 library(cowplot)
 
-#### S8A ####
+#### S9A ####
 #Astrocyte-M12
 m12$Combined.Score <- log(m12$Combined.Score)
 position1 <- rev(m12$Term)
@@ -693,11 +739,11 @@ position1 <- rev(m12$Term)
 p1 <- ggplot(data = m12[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="red") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(2,7)
 p2 <- ggplot(data = m12[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="red") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(2,7)
 
-pdf("/path/to/Figures/S8A.pdf",width=10,height=9)
+pdf("/path/to/Figures/S9A.pdf",width=10,height=9)
 plot_grid(p1,p2,ncol=1,align="v")
 dev.off()
 
-#### S8B ####
+#### S9B ####
 #Astrocyte-M14
 m14$Combined.Score <- log(m14$Combined.Score)
 position1 <- rev(m14$Term)
@@ -705,11 +751,11 @@ position1 <- rev(m14$Term)
 p3 <- ggplot(data = m14[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="green") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(2,8)
 p4 <- ggplot(data = m14[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="green") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(2,8)
 
-pdf("/path/to/Figures/S8B.pdf",width=10,height=9)
+pdf("/path/to/Figures/S9B.pdf",width=10,height=9)
 plot_grid(p3,p4,ncol=1,align="v")
 dev.off()
 
-#### S8C ####
+#### S9C ####
 #Inh_MSN-M2
 m2$Combined.Score <- log(m2$Combined.Score)
 position1 <- rev(m2$Term)
@@ -717,11 +763,11 @@ position1 <- rev(m2$Term)
 p5 <- ggplot(data = m2[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="turquoise") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(1,6)
 p6 <- ggplot(data = m2[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="turquoise") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(1,6)
 
-pdf("/path/to/Figures/S8C.pdf",width=10,height=9)
+pdf("/path/to/Figures/S9C.pdf",width=10,height=9)
 plot_grid(p5,p6,ncol=1,align="v")
 dev.off()
 
-#### S8D ####
+#### S9D ####
 #Inh_MSN-M7
 m7$Combined.Score <- log(m7$Combined.Score)
 position1 <- rev(m7$Term)
@@ -729,6 +775,6 @@ position1 <- rev(m7$Term)
 p7 <- ggplot(data = m7[c(1:10),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="#FEE12B") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(11:20)]) + theme(text=element_text(size=20))+xlab("")+xlim(2,7)
 p8 <- ggplot(data = m7[c(2:20),], aes(x = Combined.Score, y = Term)) + geom_point(size=3,color="#FEE12B") +theme_bw() + ylab("") + xlab("Enrichment log(combined score)") + scale_y_discrete(limits = position1[c(1:10)]) + theme(text=element_text(size=20))+xlab("Enrichment log(combined score)")+xlim(2,7)
 
-pdf("/path/to/Figures/S8D.pdf",width=10,height=9)
+pdf("/path/to/Figures/S9D.pdf",width=10,height=9)
 plot_grid(p7,p8,ncol=1,align="v")
 dev.off()

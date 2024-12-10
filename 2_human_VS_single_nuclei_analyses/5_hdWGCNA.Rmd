@@ -1,7 +1,7 @@
 ---
 title: "hdWGCNA of human scRNA-seq data and consensus hdWGCNA with Phillips et al. rat dataset - code adapted from https://smorabit.github.io/hdWGCNA/articles/ and https://github.com/smorabit/hdWGCNA_paper"
 author: "Eric Zillich"
-date: "last modification EZ 2024-09-13"
+date: "last modification EZ 2024-12-04"
 output: html_document
 ---
 
@@ -1238,41 +1238,41 @@ dev.off()
 Overlap analysis DE genes within inferred modules 
 
 ```{r DE_mod_overlap, warning=FALSE, message=FALSE}
-# Import DE genes 
+# Import DE genes and filter for log2FC and significance
 OPC <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOPC.csv")
-OPC_sig <- OPC[OPC$p_val_adj<0.05 & abs(OPC$avg_log2FC)>0.25 ,]
+OPC_sig <- OPC[OPC$p_val_adj<0.001& abs(OPC$avg_log2FC)>0.5 ,]
 OPC_sig_up <- OPC_sig$X[(OPC_sig$pct.1 > 0.25 | OPC_sig$pct.2 > 0.25) & OPC_sig$avg_log2FC>0]
 OPC_sig_down <- OPC_sig$X[(OPC_sig$pct.1 > 0.25 | OPC_sig$pct.2 > 0.25) & OPC_sig$avg_log2FC<0]
 
 Oligodendrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterOligodendrocyte.csv")
-Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.05 & abs(Oligodendrocyte$avg_log2FC)>0.25,]
+Oligodendrocyte_sig <- Oligodendrocyte[Oligodendrocyte$p_val_adj<0.001& abs(Oligodendrocyte$avg_log2FC)>0.5,]
 Oligodendrocyte_sig_up <- Oligodendrocyte_sig$X[(Oligodendrocyte_sig$pct.1 > 0.25 | Oligodendrocyte_sig$pct.2 > 0.25) & Oligodendrocyte_sig$avg_log2FC>0]
 Oligodendrocyte_sig_down <- Oligodendrocyte_sig$X[(Oligodendrocyte_sig$pct.1 > 0.25 | Oligodendrocyte_sig$pct.2 > 0.25) & Oligodendrocyte_sig$avg_log2FC<0]
 
 Astrocyte <- read.csv("/path/to/snRNAseq/3_results/DE/clusterAstrocyte.csv")
-Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.05 & abs(Astrocyte$avg_log2FC)>0.25,]
+Astrocyte_sig <- Astrocyte[Astrocyte$p_val_adj<0.001& abs(Astrocyte$avg_log2FC)>0.5,]
 Astrocyte_sig_up <- Astrocyte_sig$X[(Astrocyte_sig$pct.1 > 0.25 | Astrocyte_sig$pct.2 > 0.25) & Astrocyte_sig$avg_log2FC>0]
 Astrocyte_sig_down <- Astrocyte_sig$X[(Astrocyte_sig$pct.1 > 0.25 | Astrocyte_sig$pct.2 > 0.25) & Astrocyte_sig$avg_log2FC<0]
 
 Microglia <- read.csv("/path/to/snRNAseq/3_results/DE/clusterMicroglia.csv")
-Microglia_sig <- Microglia[Microglia$p_val_adj<0.05 & abs(Microglia$avg_log2FC)>0.25,]
+Microglia_sig <- Microglia[Microglia$p_val_adj<0.001& abs(Microglia$avg_log2FC)>0.5,]
 Microglia_sig_up <- Microglia_sig$X[(Microglia_sig$pct.1 > 0.25 | Microglia_sig$pct.2 > 0.25) & Microglia_sig$avg_log2FC>0]
 Microglia_sig_down <- Microglia_sig$X[(Microglia_sig$pct.1 > 0.25 | Microglia_sig$pct.2 > 0.25) & Microglia_sig$avg_log2FC<0]
 
 
 GABAergic_1 <- read.csv("/path/to/snRNAseq/3_results/DE/clusterGABAergic-1.csv")
-GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.05 & abs(GABAergic_1$avg_log2FC)>0.25,]
+GABAergic_1_sig <- GABAergic_1[GABAergic_1$p_val_adj<0.001& abs(GABAergic_1$avg_log2FC)>0.5,]
 GABAergic_1_sig_up <- GABAergic_1_sig$X[(GABAergic_1_sig$pct.1 > 0.25 | GABAergic_1_sig$pct.2 > 0.25) & GABAergic_1_sig$avg_log2FC>0]
 GABAergic_1_sig_down <- GABAergic_1_sig$X[(GABAergic_1_sig$pct.1 > 0.25 | GABAergic_1_sig$pct.2 > 0.25) & GABAergic_1_sig$avg_log2FC<0]
 
 
 D2MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD2-MSN.csv")
-D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.05 & abs(D2MSN$avg_log2FC)>0.25,]
+D2MSN_sig <- D2MSN[D2MSN$p_val_adj<0.001& abs(D2MSN$avg_log2FC)>0.5,]
 D2MSN_sig_up <- D2MSN_sig$X[(D2MSN_sig$pct.1 > 0.25 | D2MSN_sig$pct.2 > 0.25) & D2MSN_sig$avg_log2FC>0]
 D2MSN_sig_down <- D2MSN_sig$X[(D2MSN_sig$pct.1 > 0.25 | D2MSN_sig$pct.2 > 0.25) & D2MSN_sig$avg_log2FC<0]
 
 D1MSN <- read.csv("/path/to/snRNAseq/3_results/DE/clusterD1-MSN.csv")
-D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.05 & abs(D1MSN$avg_log2FC)>0.25,]
+D1MSN_sig <- D1MSN[D1MSN$p_val_adj<0.001& abs(D1MSN$avg_log2FC)>0.5,]
 D1MSN_sig_up <- D1MSN_sig$X[(D1MSN_sig$pct.1 > 0.25 | D1MSN_sig$pct.2 > 0.25) & D1MSN_sig$avg_log2FC>0]
 D1MSN_sig_down <- D1MSN_sig$X[(D1MSN_sig$pct.1 > 0.25 | D1MSN_sig$pct.2 > 0.25) & D1MSN_sig$avg_log2FC<0]
 

@@ -1,5 +1,5 @@
 #### Correlation analysis of transcriptome and proteome ####
-# Last modification 2024-09-12 EZ
+# Last modification 2024-12-04 EZ
 # Analysis following the protocol from Yang & Gorski 2022, STAR Protocols (PMID: 35634361)
 
 # Create transcript to gene matching based on the ENCODE reference transcriptome 
@@ -175,36 +175,36 @@ write.table(df_cor2,"/path/to/RNA/mRNA_prot_corr/sample_corr_table.txt",sep=" ",
                  xlab = "log2 TPM - RNA", ylab = "log2 TMT intensity - Protein",title="Highly expressed proteins")+theme(plot.title = element_text(face = "bold"))
  ggsave("/path/to/RNA/mRNA_prot_corr/Corr_mean_data_highly_expressed.pdf",p4_1,width=6,height=6)
  
-# Separate by CUD and Ctrl to see if correlation is different in CUD and Ctrl
-CUD <- phe_ordered$CUD[match(colnames(logTPM_int),phe_ordered$Brain_ID)]
-colnames(logTPM_int) <- CUD 
-colnames(datProt_int) <- CUD 
-
-dat_CUD <- logTPM_int[,colnames(logTPM_int) == 1]
-RNA_mean_dat_CUD <- rowMeans(dat_CUD)
-dat_Ctrl <- logTPM_int[,colnames(logTPM_int) == 0]
-RNA_mean_dat_Ctrl <- rowMeans(dat_Ctrl)
-
-dat_CUD2 <- datProt_int[,colnames(datProt_int) == 1]
-Prot_mean_dat_CUD <- rowMeans(dat_CUD2)
-dat_Ctrl2 <- datProt_int[,colnames(datProt_int) == 0]
-Prot_mean_dat_Ctrl <- rowMeans(dat_Ctrl2)
-
-dat_CUD <- data.frame(RNA=unname(RNA_mean_dat_CUD),Protein=unname(Prot_mean_dat_CUD),row.names = names(RNA_mean_dat_CUD))
-dat_Ctrl <- data.frame(RNA=unname(RNA_mean_dat_Ctrl),Protein=unname(Prot_mean_dat_Ctrl),row.names = names(RNA_mean_dat_Ctrl))
-
+ # Separate by CUD and Ctrl to see if correlation is different in CUD and Ctrl, for phe_ordered see script 5b_correlation_analysis_transcriptome_proteome.R
+ CUD <- phe_ordered$CUD[match(colnames(logTPM_int),phe_ordered$Brain_ID)]
+ colnames(logTPM_int) <- CUD 
+ colnames(datProt_int) <- CUD 
+ 
+ dat_CUD <- logTPM_int[,colnames(logTPM_int) == 1]
+ RNA_mean_dat_CUD <- rowMeans(dat_CUD)
+ dat_Ctrl <- logTPM_int[,colnames(logTPM_int) == 0]
+ RNA_mean_dat_Ctrl <- rowMeans(dat_Ctrl)
+ 
+ dat_CUD2 <- datProt_int[,colnames(datProt_int) == 1]
+ Prot_mean_dat_CUD <- rowMeans(dat_CUD2)
+ dat_Ctrl2 <- datProt_int[,colnames(datProt_int) == 0]
+ Prot_mean_dat_Ctrl <- rowMeans(dat_Ctrl2)
+ 
+ dat_CUD_comb <- data.frame(RNA=unname(RNA_mean_dat_CUD),Protein=unname(Prot_mean_dat_CUD),row.names = names(RNA_mean_dat_CUD))
+ dat_Ctrl_comb <- data.frame(RNA=unname(RNA_mean_dat_Ctrl),Protein=unname(Prot_mean_dat_Ctrl),row.names = names(RNA_mean_dat_Ctrl))
+ 
 # Create final plots for the CUD/Ctrl correlation coefficient comparison
 library(ggpubr)
 
 p7 <- ggarrange(p4,p4_1,nrow=2,ncol=1)
 ggsave("/path/to/RNA/mRNA_prot_corr/Corr_plots_combined.pdf",p7,width=6,height=12)
 
-dat_CUD$status <- "CUD"
-rownames(dat_CUD) <- paste0("CUD_",rownames(dat_CUD))
-dat_Ctrl$status <- "Ctrl"
-rownames(dat_Ctrl) <- paste0("Ctrl_",rownames(dat_Ctrl))
+dat_CUD_comb$status <- "CUD"
+rownames(dat_CUD_comb) <- paste0("CUD_",rownames(dat_CUD_comb))
+dat_Ctrl_comb$status <- "Ctrl"
+rownames(dat_Ctrl_comb) <- paste0("Ctrl_",rownames(dat_Ctrl_comb))
 
-dat_combined <- rbind(dat_CUD,dat_Ctrl)
+dat_combined <- rbind(dat_CUD_comb,dat_Ctrl_comb)
 
 p7_1 <- ggscatter(dat_combined , x = "RNA", y = "Protein", 
                 size=0.1,color = "status",
@@ -212,6 +212,19 @@ p7_1 <- ggscatter(dat_combined , x = "RNA", y = "Protein",
                 cor.coef = F, fullrange = T,cor.method = "pearson",
                 xlab = "log2 TPM - RNA", ylab = "log2 TMT intensity - Protein",title="Correlation by CUD status")+theme(plot.title = element_text(face = "bold"))+stat_cor(aes(color = status))+theme(legend.position = "none")
 ggsave("/path/to/RNA/mRNA_prot_corr/Corr_plots_CUD_Ctrl.pdf",p7_1,width=6,height=6)
+
+
+# Check for difference of correlation coefficients between CUD and Ctrl to calculate a delta R value indicating synchronized/desynchronized correlation patterns in CUD/Ctrl
+# Correlation coefficients for each gene where RNA and protein data is available - split by CUD and Ctrl 
+diag_CUD <- diag(cor(t(dat_CUD), t(dat_CUD2), method = "pearson"))
+diag_Ctrl <- diag(cor(t(dat_Ctrl), t(dat_Ctrl2), method = "pearson"))
+
+# Create results dataframe
+dat_diff <- data.frame(CUD=unname(diag_CUD),Ctrl=unname(diag_Ctrl))
+rownames(dat_diff)<- names(diag_CUD)
+dat_diff$diff <- diag_CUD-diag_Ctrl # diff represents the delta R value
+dat_diff <- dat_diff[order(dat_diff$diff,decreasing = T),]
+write.table(dat_diff,"/path/to/results/dat_diff.txt",row.names = T, col.names = T, quote=F, sep=";")
 
 # GSEA on the correlation coefficients to infer pathways
 
